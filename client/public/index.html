@@ -58,6 +58,7 @@
 
     <div id="crosshair"><i></i><i></i><i></i><i></i></div>
     <div id="hitmarker" class="hidden"><i></i><i></i><i></i><i></i></div>
+    <div id="damage-indicators"></div>
 
     <div id="health-box">
       <span id="health-val">100</span>
@@ -114,6 +115,21 @@
     <div class="panel center-panel">
       <h2>Error</h2>
       <p id="fatal-error-msg"></p>
+    </div>
+  </div>
+
+  <!-- =============================== AJUSTES ================================ -->
+  <div id="settings-screen" class="screen hidden">
+    <div class="panel center-panel glass-panel">
+      <h2>AJUSTES (ESC para volver)</h2>
+      
+      <label class="field">
+        <span>Sensibilidad del Ratón</span>
+        <input id="sens-slider" type="range" min="0.0001" max="0.01" step="0.0001" value="0.0022" />
+        <span id="sens-val-display" style="font-size: 0.8rem; opacity: 0.7;">0.0022</span>
+      </label>
+
+      <button id="resume-btn" type="button" style="margin-top: 15px;">VOLVER AL JUEGO</button>
     </div>
   </div>
 

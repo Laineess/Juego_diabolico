@@ -52,8 +52,41 @@ export class HUD {
       fatalError: $('fatal-error'),
       fatalErrorMsg: $('fatal-error-msg'),
       mobileWarning: $('mobile-warning'),
+      damageIndicators: $('damage-indicators'),
+      settingsScreen: $('settings-screen'),
+      sensSlider: $('sens-slider'),
+      sensValDisplay: $('sens-val-display'),
+      resumeBtn: $('resume-btn'),
     };
     this.hitTimer = null;
+    this.dmgTimer = null;
+    this.settingsOpen = false;
+
+    // Ajustes
+    this.el.resumeBtn.addEventListener('click', () => this.toggleSettings(false));
+  }
+
+  toggleSettings(open) {
+    this.settingsOpen = open;
+    if (open) this.el.settingsScreen.classList.remove('hidden');
+    else this.el.settingsScreen.classList.add('hidden');
+  }
+
+  showDirectionalDamage(angleDeg) {
+    const arc = document.createElement('div');
+    arc.className = 'dmg-arc';
+    arc.style.transform = `rotate(${angleDeg}deg)`;
+    this.el.damageIndicators.appendChild(arc);
+    
+    // Animar
+    requestAnimationFrame(() => {
+      arc.style.opacity = '1';
+      setTimeout(() => {
+        arc.style.opacity = '0';
+        setTimeout(() => arc.remove(), 500);
+      }, 1000);
+    });
+  }
     this.dmgTimer = null;
     this.countdownEndsAt = 0;
   }

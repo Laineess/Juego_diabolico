@@ -66,10 +66,19 @@ const cylinders = [
   { x: 13, z: -21, r: 2.6, h: 1.2, y: 0 },
 ];
 
+// Rampas: dir indica hacia dónde sube ('x', '-x', 'z', '-z')
+const ramps = [
+  // Rampa hacia la plataforma central izquierda
+  { x: -16, z: 0, w: 6, d: 4, h: 1.4, y: 0, dir: 'x' },
+  // Rampa hacia la plataforma central derecha
+  { x: 16, z: 0, w: 6, d: 4, h: 1.4, y: 0, dir: '-x' },
+];
+
 export const MAP = {
   arena: ARENA,
   boxes,
   cylinders,
+  ramps,
   spawns: [
     // las esquinas (±25,±25) caían dentro de los cubos (±26,±26) → ±22
     { x: -22, z: -22 },
@@ -96,6 +105,7 @@ export function serializeMap() {
     arena: ARENA,
     boxes,
     cylinders,
+    ramps,
     spawns: MAP.spawns,
   };
 }

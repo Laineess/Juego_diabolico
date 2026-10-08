@@ -134,7 +134,17 @@ function boot() {
       weapons.handleShot(evt);
     },
     onHit(e) {
-      if (e.targetId === V.selfId) hud.damage();
+      if (e.targetId === V.selfId) {
+        hud.damage();
+        const attacker = characters.get(e.byId);
+        if (attacker && player.renderPos) {
+          const dx = attacker.group.position.x - player.renderPos.x;
+          const dz = attacker.group.position.z - player.renderPos.z;
+          let angleDeg = Math.atan2(dx, dz) * (180 / Math.PI);
+          let relativeAngle = angleDeg - (player.yaw * (180 / Math.PI));
+          hud.showDirectionalDamage(relativeAngle);
+        }
+      }
       if (e.byId === V.selfId) {
         hud.hitmarker();
         weapons.onHit(false);
@@ -260,7 +270,26 @@ function boot() {
     const snap = network.latest();
     hud.showScoreboard(show, snap ? snap.players : [], V.selfId, V.round);
   };
-  player.onLockChange = (locked) => refreshBanner();
+  
+  player.onLockChange = (locked) => {
+    refreshBanner();
+    if (!locked && player.playing && V.joined && V.state !== 'waiting') {
+      hud.toggleSettings(true);
+    } else {
+      hud.toggleSettings(false);
+    }
+  };
+
+  hud.el.sensSlider.addEventListener('input', (e) => {
+    const val = parseFloat(e.target.value);
+    player.sensitivity = val;
+    hud.el.sensValDisplay.textContent = val.toFixed(4);
+  });
+
+  hud.el.resumeBtn.addEventListener('click', () => {
+    player.requestLock();
+  });
+
   player.onZoomChange = (active) => {
     weapons.setZoom(active);
     hud.setZoom(weapons.zoomed);
@@ -284,7 +313,7 @@ function boot() {
     hud.tickCountdowns(Math.max(0, V.timeLeft));
 
     player.update(dt);
-    weapons.update(dt);
+    weapons.update(dt, player);
     updateRemotes(dt);
   };
 

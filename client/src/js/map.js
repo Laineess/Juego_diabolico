@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { COLORS } from './renderer.js';
 
 export function buildMap(scene, mapData) {
-  const { arena, boxes, cylinders } = mapData;
+  const { arena, boxes, cylinders, ramps } = mapData;
   const solids = []; // mallas para raycasts de trazadoras
 
   // suelo
@@ -65,6 +65,38 @@ export function buildMap(scene, mapData) {
     scene.add(mesh);
     solids.push(mesh);
   });
+
+  // rampas
+  if (ramps) {
+    ramps.forEach((r, i) => {
+      const mat = new THREE.MeshStandardMaterial({
+        color: COLORS.boxes[(i + 4) % COLORS.boxes.length],
+        roughness: 0.88,
+        metalness: 0.02,
+      });
+      const geom = new THREE.BoxGeometry(r.w, r.h, r.d);
+      const pos = geom.attributes.position;
+      for (let j = 0; j < pos.count; j++) {
+        let px = pos.getX(j);
+        let py = pos.getY(j);
+        let pz = pos.getZ(j);
+        if (py > 0) {
+          if (r.dir === 'x' && px < 0) py = -r.h / 2;
+          if (r.dir === '-x' && px > 0) py = -r.h / 2;
+          if (r.dir === 'z' && pz < 0) py = -r.h / 2;
+          if (r.dir === '-z' && pz > 0) py = -r.h / 2;
+          pos.setY(j, py);
+        }
+      }
+      geom.computeVertexNormals();
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.position.set(r.x, r.y + r.h / 2, r.z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+      solids.push(mesh);
+    });
+  }
 
   return { solids };
 }

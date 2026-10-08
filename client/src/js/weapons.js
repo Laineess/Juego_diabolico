@@ -91,6 +91,7 @@ export class Weapons {
     this.zoomed = false;
     this.recoil = 0;
     this.swing = 0;
+    this.reloadAnim = 0;
     this.flashTime = 0;
     this.solids = [];
     this.characters = new Map(); // id -> grupo THREE
@@ -183,9 +184,12 @@ export class Weapons {
     else this.audio.hit();
   }
 
-  onReload() { this.audio.reload(); }
+  onReload() { 
+    this.audio.reload(); 
+    this.reloadAnim = 1.0;
+  }
 
-  update(dt) {
+  update(dt, player = null) {
     // zoom
     const targetFov = this.zoomed && this.zoomFov ? this.zoomFov : this.baseFov;
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
@@ -193,11 +197,26 @@ export class Weapons {
       this.camera.updateProjectionMatrix();
     }
 
-    // retroceso y balanceo
+    // Calcular velocidad local aproximada para hacer el balanceo cinético
+    let speed = 0;
+    if (player && player.renderPos) {
+      if (!this.lastPos) this.lastPos = new THREE.Vector3().copy(player.renderPos);
+      const dist = this.lastPos.distanceTo(player.renderPos);
+      speed = dist / dt;
+      this.lastPos.copy(player.renderPos);
+    }
+
+    // retroceso y balanceo (kinetic sway)
     this.recoil = Math.max(0, this.recoil - dt * 6);
-    const sway = Math.sin(performance.now() / 900) * 0.006;
-    this.vm.position.x = 0.3 + sway;
-    this.vm.position.y = -0.26 + Math.sin(performance.now() / 650) * 0.004 + this.recoil * 0.02;
+    
+    // Sway base más sway extra al moverse
+    const t = performance.now();
+    const baseSway = Math.sin(t / 900) * 0.003;
+    const kineticSwayX = speed > 1 ? Math.sin(t / 150) * 0.015 : 0;
+    const kineticSwayY = speed > 1 ? Math.cos(t / 150 * 2) * 0.01 : 0;
+
+    this.vm.position.x = 0.3 + baseSway + kineticSwayX;
+    this.vm.position.y = -0.26 + Math.sin(t / 650) * 0.002 + kineticSwayY + this.recoil * 0.02;
     this.vm.position.z = -0.5 + this.recoil * 0.09;
     this.vm.rotation.x = this.recoil * 0.18;
 
@@ -205,6 +224,13 @@ export class Weapons {
       this.swing = Math.max(0, this.swing - dt * 4);
       this.vm.rotation.z = Math.sin((1 - this.swing) * Math.PI) * -0.9;
       this.vm.rotation.y = Math.sin((1 - this.swing) * Math.PI) * 0.5;
+    } else if (this.reloadAnim > 0) {
+      this.reloadAnim = Math.max(0, this.reloadAnim - dt * 1.5);
+      const p = 1 - this.reloadAnim;
+      // Rotación compleja de recarga (Flip estilo shooter moderno)
+      this.vm.rotation.x += Math.sin(p * Math.PI) * Math.PI * 2;
+      this.vm.rotation.y += Math.sin(p * Math.PI * 2) * 0.5;
+      this.vm.position.y -= Math.sin(p * Math.PI) * 0.3; // bajar un poco
     } else {
       this.vm.rotation.z *= 0.8;
       this.vm.rotation.y *= 0.8;

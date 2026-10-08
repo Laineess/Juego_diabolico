@@ -415,6 +415,15 @@ export class Game {
       if (Math.abs(x - b.x) < b.w / 2 + PLAYER.radius &&
           Math.abs(z - b.z) < b.d / 2 + PLAYER.radius) return true;
     }
+    // Rampas actúan como AABB sólidas
+    if (MAP.ramps) {
+      for (const r of MAP.ramps) {
+        const top = r.y + r.h;
+        if (!(r.y < feetY + height && top > feetY + STEP_HEIGHT)) continue;
+        if (Math.abs(x - r.x) < r.w / 2 + PLAYER.radius &&
+            Math.abs(z - r.z) < r.d / 2 + PLAYER.radius) return true;
+      }
+    }
     for (const c of MAP.cylinders) {
       const top = c.y + c.h;
       if (!(c.y < feetY + height && top > feetY + STEP_HEIGHT)) continue;
@@ -443,6 +452,24 @@ export class Game {
       const dz = z - c.z;
       const r = c.r + PLAYER.radius * 0.6;
       if (dx * dx + dz * dz < r * r && top > g) g = top;
+    }
+    if (MAP.ramps) {
+      for (const r of MAP.ramps) {
+        if (Math.abs(x - r.x) < r.w / 2 + PLAYER.radius * 0.6 &&
+            Math.abs(z - r.z) < r.d / 2 + PLAYER.radius * 0.6) {
+          
+          let pct = 0;
+          if (r.dir === 'x') pct = (x - (r.x - r.w / 2)) / r.w;
+          else if (r.dir === '-x') pct = ((r.x + r.w / 2) - x) / r.w;
+          else if (r.dir === 'z') pct = (z - (r.z - r.d / 2)) / r.d;
+          else if (r.dir === '-z') pct = ((r.z + r.d / 2) - z) / r.d;
+          
+          pct = Math.max(0, Math.min(1, pct));
+          const top = r.y + r.h * pct;
+          if (top > feetY + STEP_HEIGHT) continue;
+          if (top > g) g = top;
+        }
+      }
     }
     return g;
   }
@@ -538,6 +565,14 @@ export class Game {
         { x: b.x - b.w / 2, y: b.y, z: b.z - b.d / 2 },
         { x: b.x + b.w / 2, y: b.y + b.h, z: b.z + b.d / 2 });
       if (t < best) best = t;
+    }
+    if (MAP.ramps) {
+      for (const r of MAP.ramps) {
+        const t = rayAABB(origin, dir,
+          { x: r.x - r.w / 2, y: r.y, z: r.z - r.d / 2 },
+          { x: r.x + r.w / 2, y: r.y + r.h, z: r.z + r.d / 2 });
+        if (t < best) best = t;
+      }
     }
     for (const c of MAP.cylinders) {
       const t = rayCylinder(origin, dir, c.x, c.z, c.r, c.y, c.y + c.h);

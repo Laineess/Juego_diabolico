@@ -159,16 +159,37 @@ export function setCharacterWeapon(char, weaponId) {
   }
   if (!weaponId) return;
 
-  let geo;
-  if (weaponId === 'sniper') geo = new THREE.BoxGeometry(0.07, 0.07, 1.15);
-  else if (weaponId === 'smg') geo = new THREE.BoxGeometry(0.1, 0.16, 0.62);
-  else geo = new THREE.BoxGeometry(0.05, 0.12, 0.5); // cuchillo
+  const dark = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.6, metalness: 0.5 });
+  const mid = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.5, metalness: 0.6 });
+  const wood = new THREE.MeshStandardMaterial({ color: 0x5c3a21, roughness: 0.8, metalness: 0.1 });
+  
+  const group = new THREE.Group();
+  
+  const addPart = (geo, mat, x, y, z, rx = 0) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.rotation.x = rx;
+    m.castShadow = true;
+    group.add(m);
+  };
 
-  const mat = new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 0.5, metalness: 0.4 });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(0, -0.05, -0.35);
-  mesh.castShadow = true;
-  char.weaponHolder.add(mesh);
+  if (weaponId === 'sniper') {
+    addPart(new THREE.BoxGeometry(0.06, 0.08, 0.9), dark, 0, 0, -0.3);
+    addPart(new THREE.CylinderGeometry(0.025, 0.025, 0.6, 8), mid, 0, 0.05, -0.6, Math.PI / 2);
+    addPart(new THREE.BoxGeometry(0.05, 0.14, 0.25), wood, 0, -0.06, 0.1); // culata
+    addPart(new THREE.CylinderGeometry(0.02, 0.02, 0.25, 8), mid, 0, 0.1, -0.1, Math.PI / 2); // mira
+  } else if (weaponId === 'smg') {
+    addPart(new THREE.BoxGeometry(0.08, 0.1, 0.45), dark, 0, 0, -0.2);
+    addPart(new THREE.CylinderGeometry(0.015, 0.015, 0.25, 8), mid, 0, 0.02, -0.5, Math.PI / 2);
+    addPart(new THREE.BoxGeometry(0.04, 0.18, 0.07), mid, 0, -0.12, -0.05, 0.1); // cargador
+  } else {
+    // cuchillo
+    addPart(new THREE.BoxGeometry(0.02, 0.08, 0.02), mid, 0, -0.04, -0.1);
+    addPart(new THREE.BoxGeometry(0.01, 0.2, 0.03), dark, 0, 0.1, -0.1);
+  }
+
+  group.position.set(0, -0.05, -0.2);
+  char.weaponHolder.add(group);
 }
 
 // pos/rot del servidor → personaje en escena
@@ -243,15 +264,21 @@ export class Renderer {
     scene.environmentIntensity = 0.55;
   }
 
-  buildGameScene() {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(COLORS.background);
-    scene.fog = new THREE.Fog(COLORS.background, 45, 150);
+    
+    // Niebla atmosférica profunda
+    scene.fog = new THREE.FogExp2(COLORS.background, 0.015);
 
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x9a9a9a, 1.1);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x7b8b9a, 0.8);
     scene.add(hemi);
+    
+    // Luz de relleno cálida para dar contraste
+    const fillLight = new THREE.DirectionalLight(0xffdbb8, 0.6);
+    fillLight.position.set(-20, 15, -20);
+    scene.add(fillLight);
 
-    const sun = new THREE.DirectionalLight(0xffffff, 2.1);
+    const sun = new THREE.DirectionalLight(0xffffff, 2.4);
     sun.position.set(35, 55, 20);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);

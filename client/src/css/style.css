@@ -330,3 +330,56 @@ html, body {
 .podium .col.first { padding-bottom: 40px; }
 .podium .col.second { padding-bottom: 24px; }
 .podium .col.third { padding-bottom: 12px; }
+
+/* --------------------------- GLASSMORPHISM & AJUSTES --------------------------- */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  color: #fff;
+}
+.glass-panel h2 { color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+.glass-panel span { color: #eee; }
+.glass-panel button {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.4);
+  padding: 12px 24px;
+  font-weight: bold;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.glass-panel button:hover { background: rgba(255,255,255,0.4); transform: scale(1.05); }
+
+input[type="range"] {
+  width: 100%;
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
+
+/* --------------------------- DAÑO DIRECCIONAL --------------------------- */
+#damage-indicators {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 300px;
+  height: 300px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 10;
+}
+.dmg-arc {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  border-radius: 50%;
+  border-top: 8px solid var(--danger);
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+  opacity: 0;
+  transition: opacity 0.5s ease-out;
+  filter: drop-shadow(0 0 10px var(--danger));
+}
