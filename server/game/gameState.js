@@ -365,6 +365,8 @@ export class Game {
     p.pitch = inp.pitch;
     p.crouch = inp.crouch;
 
+    const height = p.crouch ? PLAYER.crouchHeight : PLAYER.height;
+
     const wpn = WEAPONS[weaponId] || WEAPONS.smg;
     let speed = BASE_SPEED * wpn.speedMult;
     if (p.crouch) speed *= CROUCH_MULT;
@@ -377,8 +379,6 @@ export class Game {
     let mz = (-cos * inp.fwd) + (-sin * inp.strafe);
     const len = Math.hypot(mx, mz);
     if (len > 1e-6) { mx = (mx / len) * speed * dt; mz = (mz / len) * speed * dt; }
-
-    const height = p.crouch ? PLAYER.crouchHeight : PLAYER.height;
 
     // eje X
     if (mx !== 0 && !this.collides(p.x + mx, p.z, p.y, height)) p.x += mx;
@@ -604,7 +604,9 @@ export class Game {
   }
 
   pickSpawn() {
-    const spawns = MAP.spawns;
+    // solo spawns que no caen dentro de la geometría (evita jugadores atrapados)
+    const height = PLAYER.height;
+    const spawns = MAP.spawns.filter((s) => !this.collides(s.x, s.z, 0, height));
     if (!spawns.length) return { x: 0, z: 0 };
     let best = spawns[0];
     let bestScore = -1;
@@ -618,11 +620,13 @@ export class Game {
       const score = minDist === Infinity ? 1000 : minDist;
       if (score > bestScore) { bestScore = score; best = s; }
     }
-    // variación ligera para evitar apilarse
-    return {
-      x: best.x + (Math.random() - 0.5),
-      z: best.z + (Math.random() - 0.5),
-    };
+    // variación ligera para evitar apilarse (verificada contra colisiones)
+    for (let i = 0; i < 8; i++) {
+      const x = best.x + (Math.random() - 0.5);
+      const z = best.z + (Math.random() - 0.5);
+      if (!this.collides(x, z, 0, height)) return { x, z };
+    }
+    return { x: best.x, z: best.z };
   }
 
   // ------------------------------------------------------------- clasificación

@@ -71,10 +71,11 @@ export const MAP = {
   boxes,
   cylinders,
   spawns: [
-    { x: -25, z: -25 },
-    { x: 25, z: 25 },
-    { x: -25, z: 25 },
-    { x: 25, z: -25 },
+    // las esquinas (±25,±25) caían dentro de los cubos (±26,±26) → ±22
+    { x: -22, z: -22 },
+    { x: 22, z: 22 },
+    { x: -22, z: 22 },
+    { x: 22, z: -22 },
     { x: 0, z: -26 },
     { x: 0, z: 26 },
     { x: -26, z: 0 },
