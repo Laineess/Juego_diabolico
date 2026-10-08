@@ -1,0 +1,13 @@
+{
+  "name": "web-fps-tournament-client",
+  "version": "1.0.0",
+  "description": "Cliente web 3D del shooter multiplayer (Three.js, solo PC)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "vendor": "node scripts/vendor-three.js"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  }
+}

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shooter Tournament 3D</title>
+  <link rel="stylesheet" href="/src/css/style.css" />
+  <script type="importmap">
+    { "imports": { "three": "/lib/three.module.js" } }
+  </script>
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+
+  <!-- ================================ SOLO PC ================================ -->
+  <div id="mobile-warning" class="screen hidden">
+    <div class="panel center-panel">
+      <h1>Solo PC</h1>
+      <p>Este shooter está diseñado para jugarse en computadoras con teclado y ratón.</p>
+      <p>Abre la página desde un navegador de escritorio.</p>
+    </div>
+  </div>
+
+  <!-- ================================= LOBBY ================================ -->
+  <div id="lobby" class="screen">
+    <div class="panel lobby-panel">
+      <h1>SHOOTER<span>TOURNAMENT</span></h1>
+      <p class="subtitle">Muerte libre · 3 rondas de 3 minutos · Solo PC</p>
+
+      <label class="field">
+        <span>Nickname</span>
+        <input id="nick-input" type="text" maxlength="18" placeholder="Tu nick" autocomplete="off" />
+      </label>
+
+      <div class="field">
+        <span>Color del personaje</span>
+        <div id="color-swatches"></div>
+        <input id="color-input" type="color" value="#4fc3f7" />
+      </div>
+
+      <button id="play-btn" type="button">JUGAR</button>
+      <div id="lobby-status"></div>
+
+      <div class="controls-help">
+        <b>WASD</b> mover · <b>Ratón</b> mirar · <b>Clic</b> disparar ·
+        <b>Shift</b> esprint · <b>Ctrl</b> agacharse · <b>Espacio</b> saltar ·
+        <b>R</b> recargar · <b>Clic dcho.</b> zoom · <b>Tab</b> marcador
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================== HUD ================================= -->
+  <div id="hud" class="hidden">
+    <div id="round-info">RONDA <b id="round-num">–</b>/3 · <b id="weapon-name">–</b></div>
+    <div id="timer">3:00</div>
+    <div id="state-banner" class="hidden"></div>
+    <div id="killfeed"></div>
+
+    <div id="crosshair"><i></i><i></i><i></i><i></i></div>
+    <div id="hitmarker" class="hidden"><i></i><i></i><i></i><i></i></div>
+
+    <div id="health-box">
+      <span id="health-val">100</span>
+      <div class="bar"><div id="health-bar"></div></div>
+    </div>
+    <div id="ammo-box"><span id="ammo-val">–</span><small id="ammo-label"></small></div>
+    <div id="reload-hint" class="hidden">RECARGANDO…</div>
+
+    <div id="damage-vignette"></div>
+    <div id="respawn-overlay" class="hidden">
+      <div>ELIMINADO</div>
+      <span>Reaparece en <b id="respawn-count">3</b></span>
+    </div>
+
+    <div id="zoom-overlay" class="hidden">
+      <div class="zoom-lens"></div>
+      <div class="zoom-cross"><i></i><i></i></div>
+    </div>
+
+    <div id="scoreboard" class="hidden">
+      <div class="sb-title" id="sb-title">MARCADOR · RONDA 1</div>
+      <table>
+        <thead>
+          <tr><th>#</th><th>Jugador</th><th>Kills</th><th>Muertes</th><th>Ronda</th></tr>
+        </thead>
+        <tbody id="sb-body"></tbody>
+      </table>
+    </div>
+
+    <div id="system-msgs"></div>
+  </div>
+
+  <!-- ============================ FIN DE RONDA ============================== -->
+  <div id="round-screen" class="screen hidden">
+    <div class="panel center-panel">
+      <h2 id="round-screen-title">RONDA 1 · TERMINADA</h2>
+      <ol id="round-top3" class="podium-list"></ol>
+      <p id="round-next" class="muted">Siguiente ronda en <b id="round-next-count">10</b>…</p>
+    </div>
+  </div>
+
+  <!-- ============================= FIN DE PARTIDA =========================== -->
+  <div id="match-screen" class="screen hidden">
+    <div class="panel center-panel wide-panel">
+      <h2>RESULTADO FINAL</h2>
+      <div id="podium" class="podium"></div>
+      <ol id="match-rest" class="podium-list"></ol>
+      <p id="match-saved" class="muted"></p>
+      <p class="muted">Nueva partida en <b id="match-next-count">20</b>…</p>
+    </div>
+  </div>
+
+  <div id="fatal-error" class="screen hidden">
+    <div class="panel center-panel">
+      <h2>Error</h2>
+      <p id="fatal-error-msg"></p>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
