@@ -20,6 +20,7 @@ export class HUD {
     this.el = {
       hud: $('hud'),
       roundNum: $('round-num'),
+      roundTotal: $('round-total'),
       weaponName: $('weapon-name'),
       timer: $('timer'),
       banner: $('state-banner'),
@@ -56,11 +57,16 @@ export class HUD {
       settingsScreen: $('settings-screen'),
       sensSlider: $('sens-slider'),
       sensValDisplay: $('sens-val-display'),
+      invertYInput: $('invert-y-input'),
+      volumeSlider: $('volume-slider'),
+      volumeValDisplay: $('volume-val-display'),
       resumeBtn: $('resume-btn'),
+      exitBtn: $('exit-btn'),
     };
     this.hitTimer = null;
     this.dmgTimer = null;
     this.settingsOpen = false;
+    this.countdownEndsAt = 0;
 
     // Ajustes
     this.el.resumeBtn.addEventListener('click', () => this.toggleSettings(false));
@@ -87,15 +93,13 @@ export class HUD {
       }, 1000);
     });
   }
-    this.dmgTimer = null;
-    this.countdownEndsAt = 0;
-  }
 
   show() { this.el.hud.classList.remove('hidden'); }
   hide() { this.el.hud.classList.add('hidden'); }
 
-  setRound(n, weaponId) {
+  setRound(n, weaponId, totalRounds) {
     this.el.roundNum.textContent = n || '–';
+    this.el.roundTotal.textContent = totalRounds || '3';
     this.el.weaponName.textContent = WEAPON_LABELS[weaponId] || '–';
   }
 

@@ -1,4 +1,4 @@
-# Guía de Arquitectura y Planificación: Shooter Web Multiplayer para Torneo
+E# Guía de Arquitectura y Planificación: Shooter Web Multiplayer para Torneo
 
 Este documento define la arquitectura técnica, el stack tecnológico, los flujos de comunicación y la estructura de directorios para desarrollar e implementar un shooter en línea optimizado para un torneo de 15+ personas, desplegado en **Amazon EC2**.
 

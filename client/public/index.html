@@ -25,7 +25,7 @@
   <div id="lobby" class="screen">
     <div class="panel lobby-panel">
       <h1>SHOOTER<span>TOURNAMENT</span></h1>
-      <p class="subtitle">Muerte libre · 3 rondas de 3 minutos · Solo PC</p>
+      <p class="subtitle">Muerte libre · salas personalizadas · Solo PC</p>
 
       <label class="field">
         <span>Nickname</span>
@@ -38,7 +38,58 @@
         <input id="color-input" type="color" value="#4fc3f7" />
       </div>
 
-      <button id="play-btn" type="button">JUGAR</button>
+      <div class="lobby-tabs">
+        <button id="tab-quick" class="tab active" type="button">RÁPIDA</button>
+        <button id="tab-rooms" class="tab" type="button">SALAS</button>
+        <button id="tab-create" class="tab" type="button">CREAR</button>
+      </div>
+
+      <div id="tab-quick-panel" class="tab-panel">
+        <button id="play-btn" type="button">JUGAR</button>
+      </div>
+
+      <div id="tab-rooms-panel" class="tab-panel hidden">
+        <div class="rooms-head">
+          <span id="rooms-count">0 salas</span>
+          <button id="rooms-refresh" type="button">Actualizar</button>
+        </div>
+        <div id="room-list" class="room-list"></div>
+      </div>
+
+      <div id="tab-create-panel" class="tab-panel hidden">
+        <label class="field">
+          <span>Nombre de la sala</span>
+          <input id="room-name" type="text" maxlength="24" placeholder="Mi sala" />
+        </label>
+        <div class="grid-2">
+          <label class="field">
+            <span>Máx. jugadores</span>
+            <input id="room-max" type="number" min="2" max="15" value="15" />
+          </label>
+          <label class="field">
+            <span>Rondas</span>
+            <input id="room-rounds" type="number" min="1" max="10" value="3" />
+          </label>
+          <label class="field">
+            <span>Seg. por ronda</span>
+            <input id="room-round-seconds" type="number" min="30" max="1800" value="180" />
+          </label>
+          <label class="field">
+            <span>Intermedio (s)</span>
+            <input id="room-intermission" type="number" min="3" max="60" value="10" />
+          </label>
+        </div>
+        <div class="field">
+          <span>Arma de cada ronda</span>
+          <div id="room-weapons" class="weapons-config"></div>
+        </div>
+        <label class="check"><input id="room-bots" type="checkbox" checked /> <span>Rellenar con bots hasta el aforo</span></label>
+        <label class="check"><input id="room-wait-ready" type="checkbox" checked /> <span>Esperar a que todos estén listos (pulsa F)</span></label>
+        <label class="check"><input id="room-private" type="checkbox" /> <span>Sala privada (contraseña)</span></label>
+        <input id="room-password" type="text" maxlength="24" placeholder="Contraseña" class="hidden" />
+        <button id="create-btn" type="button">CREAR Y JUGAR</button>
+      </div>
+
       <div id="lobby-status"></div>
 
       <div class="controls-help">
@@ -51,7 +102,7 @@
 
   <!-- ================================== HUD ================================= -->
   <div id="hud" class="hidden">
-    <div id="round-info">RONDA <b id="round-num">–</b>/3 · <b id="weapon-name">–</b></div>
+    <div id="round-info">RONDA <b id="round-num">–</b>/<b id="round-total">3</b> · <b id="weapon-name">–</b></div>
     <div id="timer">3:00</div>
     <div id="state-banner" class="hidden"></div>
     <div id="killfeed"></div>
@@ -118,18 +169,31 @@
     </div>
   </div>
 
-  <!-- =============================== AJUSTES ================================ -->
+  <!-- =============================== PAUSA ================================ -->
   <div id="settings-screen" class="screen hidden">
     <div class="panel center-panel glass-panel">
-      <h2>AJUSTES (ESC para volver)</h2>
-      
+      <h2>PAUSA</h2>
+
       <label class="field">
-        <span>Sensibilidad del Ratón</span>
-        <input id="sens-slider" type="range" min="0.0001" max="0.01" step="0.0001" value="0.0022" />
-        <span id="sens-val-display" style="font-size: 0.8rem; opacity: 0.7;">0.0022</span>
+        <span>Sensibilidad del ratón</span>
+        <input id="sens-slider" type="range" min="0.0005" max="0.03" step="0.0005" value="0.0040" />
+        <span id="sens-val-display" style="font-size: 0.8rem; opacity: 0.7;">0.0040</span>
       </label>
 
-      <button id="resume-btn" type="button" style="margin-top: 15px;">VOLVER AL JUEGO</button>
+      <label class="check">
+        <input id="invert-y-input" type="checkbox" /> <span>Invertir eje vertical (Y)</span>
+      </label>
+
+      <label class="field">
+        <span>Volumen</span>
+        <input id="volume-slider" type="range" min="0" max="100" step="1" value="80" />
+        <span id="volume-val-display" style="font-size: 0.8rem; opacity: 0.7;">80%</span>
+      </label>
+
+      <div class="pause-actions">
+        <button id="resume-btn" type="button">REANUDAR</button>
+        <button id="exit-btn" type="button">SALIR DE LA PARTIDA</button>
+      </div>
     </div>
   </div>
 

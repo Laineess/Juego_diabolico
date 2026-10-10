@@ -37,12 +37,34 @@ export class Network {
     s.on('game:state', (e) => this.h.onState?.(e));
     s.on('weapon:reload', (e) => this.h.onReload?.(e));
     s.on('chat:system', (msg) => this.h.onSystem?.(msg));
+    s.on('rooms:list', (data) => this.h.onRoomsList?.(data));
     s.on('game:error', (e) => this.h.onError?.(e));
+    s.on('lobby:back', () => this.h.onLobbyBack?.());
     return this.socket;
+  }
+
+  listRooms() {
+    this.socket?.emit('rooms:list');
+  }
+
+  createRoom(payload) {
+    this.socket?.emit('room:create', payload);
+  }
+
+  joinRoom(roomId, nick, color, password) {
+    this.socket?.emit('room:join', { roomId, nick, color, password });
   }
 
   join(nick, color) {
     this.socket?.emit('player:join', { nick, color });
+  }
+
+  leaveRoom() {
+    this.socket?.emit('room:leave');
+  }
+
+  setReady(ready = true) {
+    this.socket?.emit('player:ready', { ready });
   }
 
   sendInput(input) {

@@ -6,9 +6,9 @@ import { RoomEnvironment } from '/lib/RoomEnvironment.js';
 
 export const COLORS = {
   background: 0xd9d9d9,
-  ground: 0xcfcfcf,
-  wall: 0xc4c4c4,
-  boxes: [0xbdbdbd, 0xc9c9c9, 0xd4d4d4, 0xe2e2e2],
+  ground: 0x7a5230,   // suelo café
+  wall: 0xf4f4f4,     // paredes blancas
+  boxes: [0x2f6fd1, 0x3f86e0, 0x1f5bb5, 0x5aa0ec], // objetos/obstáculos azules
 };
 
 export function createGlassCharacter(colorHex) {
@@ -97,6 +97,7 @@ export function createGlassCharacter(colorHex) {
   label.position.y = 2.15;
   label.renderOrder = 10;
   group.add(label);
+  label.raycast = () => {}; // las etiquetas no deben interceptar balas
 
   // barra de vida (dos planos simples)
   const hpBg = new THREE.Mesh(
@@ -106,6 +107,7 @@ export function createGlassCharacter(colorHex) {
   hpBg.position.y = 1.98;
   hpBg.renderOrder = 9;
   group.add(hpBg);
+  hpBg.raycast = () => {};
 
   const hpBar = new THREE.Mesh(
     new THREE.PlaneGeometry(0.86, 0.055),
@@ -114,6 +116,7 @@ export function createGlassCharacter(colorHex) {
   hpBar.position.y = 1.98;
   hpBar.renderOrder = 10;
   group.add(hpBar);
+  hpBar.raycast = () => {};
 
   const char = {
     group,
@@ -152,10 +155,16 @@ export function setCharacterLabel(char, text, color = '#ffffff') {
 }
 
 export function setCharacterWeapon(char, weaponId) {
-  const old = char.weaponHolder.children[0];
-  if (old) {
-    char.weaponHolder.remove(old);
-    old.geometry.dispose();
+  // El arma es un Group: hay que recorrerlo para liberar sus geometrías.
+  // (Antes se hacía `old.geometry.dispose()` sobre el Group, lo que lanzaba
+  // una excepción y dejaba el modelo del arma anterior pegado a la mano:
+  // en las rondas de cuchillo seguían viéndose las armas de la ronda previa.)
+  for (const child of [...char.weaponHolder.children]) {
+    char.weaponHolder.remove(child);
+    child.traverse?.((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material && o.material.dispose) o.material.dispose();
+    });
   }
   if (!weaponId) return;
 
@@ -183,12 +192,23 @@ export function setCharacterWeapon(char, weaponId) {
     addPart(new THREE.CylinderGeometry(0.015, 0.015, 0.25, 8), mid, 0, 0.02, -0.5, Math.PI / 2);
     addPart(new THREE.BoxGeometry(0.04, 0.18, 0.07), mid, 0, -0.12, -0.05, 0.1); // cargador
   } else {
-    // cuchillo
-    addPart(new THREE.BoxGeometry(0.02, 0.08, 0.02), mid, 0, -0.04, -0.1);
-    addPart(new THREE.BoxGeometry(0.01, 0.2, 0.03), dark, 0, 0.1, -0.1);
+    // cuchillo: piezas contiguas orientadas hacia delante (-Z), igual que el
+    // resto de armas del personaje. Antes se construía sobre el eje Y, por lo
+    // que sobresalía hacia arriba y se veía como bloques sueltos.
+    const steel = new THREE.MeshStandardMaterial({ color: 0xc4c9cf, roughness: 0.3, metalness: 0.85 });
+    const handle = new THREE.MeshStandardMaterial({ color: 0x4a4a4a, roughness: 0.85, metalness: 0.1 });
+    addPart(new THREE.BoxGeometry(0.022, 0.052, 0.24), steel, 0, 0.02, -0.16);   // hoja
+    addPart(new THREE.BoxGeometry(0.016, 0.04, 0.09), steel, 0, 0.02, -0.315);   // punta
+    addPart(new THREE.BoxGeometry(0.008, 0.03, 0.2), steel, 0, 0.045, -0.17);    // lomo
+    addPart(new THREE.BoxGeometry(0.05, 0.024, 0.032), mid, 0, 0.02, -0.045);    // guarda
+    addPart(new THREE.BoxGeometry(0.03, 0.042, 0.15), handle, 0, 0.02, 0.05);    // mango
+    addPart(new THREE.BoxGeometry(0.036, 0.05, 0.024), steel, 0, 0.02, 0.135);   // pomo
   }
 
-  group.position.set(0, -0.05, -0.2);
+  group.position.set(0, 0.02, 0);
+  // el arma se alinea con el antebrazo (que apunta hacia delante tras rotar
+  // el brazo en X) para que el cañón mire al frente y no hacia el suelo
+  group.rotation.x = -Math.PI / 2;
   char.weaponHolder.add(group);
 }
 
@@ -226,7 +246,7 @@ export function updateCharacter(char, p, dt) {
   char.leftLeg.rotation.x = -swing;
   char.leftArm.rotation.x = -swing * 0.8;
   // brazo derecho siempre en posición de apuntar/objetivo
-  char.rightArm.rotation.x = -Math.PI / 2 + swing * 0.2;
+  char.rightArm.rotation.x = Math.PI / 2 + swing * 0.2;
 
   // barra de vida (0..1)
   const frac = Math.max(0, Math.min(1, p.hp / 100));
@@ -238,7 +258,7 @@ export function updateCharacter(char, p, dt) {
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
@@ -264,6 +284,7 @@ export class Renderer {
     scene.environmentIntensity = 0.55;
   }
 
+  buildGameScene() {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(COLORS.background);
     
@@ -297,18 +318,82 @@ export class Renderer {
   buildPreviewScene() {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(COLORS.background);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x9a9a9a, 1.2));
+    scene.fog = new THREE.FogExp2(COLORS.background, 0.018);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x9a9a9a, 1.0));
 
-    const key = new THREE.DirectionalLight(0xffffff, 2);
-    key.position.set(3, 5, 4);
+    const key = new THREE.DirectionalLight(0xffffff, 2.2);
+    key.position.set(4, 8, 5);
+    key.castShadow = true;
+    key.shadow.mapSize.set(1024, 1024);
+    key.shadow.camera.left = -14;
+    key.shadow.camera.right = 14;
+    key.shadow.camera.top = 14;
+    key.shadow.camera.bottom = -14;
+    key.shadow.camera.far = 40;
     scene.add(key);
 
-    const rim = new THREE.DirectionalLight(0xffffff, 1.2);
+    const rim = new THREE.DirectionalLight(0xffffff, 1.0);
     rim.position.set(-4, 3, -3);
     scene.add(rim);
 
     this.setupEnvironment(scene);
 
+    // ---- sección del mapa de fondo: suelo café, muros blancos, objetos azules
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(90, 90),
+      new THREE.MeshStandardMaterial({ color: COLORS.ground, roughness: 0.95, metalness: 0 }),
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const wallMat = new THREE.MeshStandardMaterial({ color: COLORS.wall, roughness: 0.9 });
+    const back = new THREE.Mesh(new THREE.BoxGeometry(52, 6, 1), wallMat);
+    back.position.set(0, 2.8, -11);
+    back.receiveShadow = true;
+    scene.add(back);
+    const sideL = new THREE.Mesh(new THREE.BoxGeometry(1, 6, 30), wallMat);
+    sideL.position.set(-15, 2.8, -4);
+    scene.add(sideL);
+    const sideR = new THREE.Mesh(new THREE.BoxGeometry(1, 6, 30), wallMat);
+    sideR.position.set(15, 2.8, -4);
+    scene.add(sideR);
+
+    const boxSpecs = [
+      [-3.2, -3.5, 1.6, 1.4, 1.6],
+      [3.4, -4.2, 2.0, 2.6, 2.0],
+      [-5.6, -6.6, 1.4, 1.8, 1.4],
+      [5.9, -7.1, 2.4, 1.2, 2.4],
+      [-7.6, -2.6, 1.2, 2.2, 1.2],
+      [7.3, -2.2, 1.4, 1.6, 1.4],
+      [-2.1, -8.6, 2.2, 3.0, 2.2],
+      [4.1, -9.1, 1.6, 2.0, 1.6],
+    ];
+    boxSpecs.forEach(([x, z, w, h, d], i) => {
+      const mat = new THREE.MeshStandardMaterial({
+        color: COLORS.boxes[i % COLORS.boxes.length], roughness: 0.85, metalness: 0.04,
+      });
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      m.position.set(x, h / 2 - 0.2, z);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      scene.add(m);
+    });
+
+    const cylSpecs = [[-6.2, -4.2, 0.9, 2.4], [6.6, -5.2, 1.1, 1.8]];
+    cylSpecs.forEach(([x, z, r, h], i) => {
+      const mat = new THREE.MeshStandardMaterial({
+        color: COLORS.boxes[(i + 1) % COLORS.boxes.length], roughness: 0.8, metalness: 0.04,
+      });
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 24), mat);
+      m.position.set(x, h / 2 - 0.2, z);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      scene.add(m);
+    });
+
+    // pedestal del personaje en el lobby
     const base = new THREE.Mesh(
       new THREE.CylinderGeometry(1.15, 1.3, 0.18, 48),
       new THREE.MeshStandardMaterial({ color: 0xbdbdbd, roughness: 0.7 }),

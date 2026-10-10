@@ -4,13 +4,10 @@
 
 import '../config/env.js';
 import { WEAPONS, shuffle } from './weaponConfig.js';
+import { WEAPON_IDS, sanitizeRoomConfig } from './roomConfig.js';
 import { MAP, ARENA, PLAYER } from './mapData.js';
 
 const TICK_RATE = Number(process.env.TICK_RATE) || 30;
-const ROUND_SECONDS = Number(process.env.ROUND_SECONDS) || 180;
-const INTERMISSION_SECONDS = Number(process.env.INTERMISSION_SECONDS) || 10;
-const COUNTDOWN_SECONDS = Number(process.env.COUNTDOWN_SECONDS) || 5;
-const RESPAWN_SECONDS = Number(process.env.RESPAWN_SECONDS) || 3;
 
 const BASE_SPEED = 6.0;
 const SPRINT_MULT = 1.35;
@@ -21,6 +18,54 @@ const STEP_HEIGHT = 0.35;
 const MAX_HEALTH = 100;
 
 const HALF = ARENA.size / 2;
+
+// ---------------------------------------------------------------------- bots
+const MAX_PLAYERS = 15;          // aforo absoluto de cualquier sala
+const BOT_VIEW_RANGE = 70;       // distancia máxima a la que un bot detecta
+const BOT_REACTION_MS = 620;     // tiempo mínimo entre disparos de un bot
+const BOT_PREFERRED_RANGE = { sniper: 22, smg: 10, knife: 1.6 };
+const BOT_SPEED_MULT = 0.82;     // los bots se mueven más lento que un humano
+const BOT_TURN_RATE = 0.075;     // radianes por tick al girar hacia el objetivo
+const BOT_AIM_JITTER = 0.05;     // error angular al disparar (radianes)
+const BOT_ALIGN_THRESHOLD = 0.14;// tolerancia de apuntado para disparar
+
+// ---------------------------------------------------------------- aim assist
+// Ayuda de puntería SOLO para jugadores humanos (los bots ya apuntan solos).
+// Si un enemigo está dentro de un cono pequeño alrededor de la mira y hay
+// línea de visión, el disparo se dobla ligeramente hacia él y se reduce la
+// dispersión. Nunca asiste a través de la geometría del mapa.
+const AIM_ASSIST = {
+  enabled: true,
+  angle: 0.06,       // cono de enganche para armas de fuego (~3.4°)
+  meleeAngle: 0.22,  // el cuchillo es más indulgente (~12.6°)
+  strength: 0.7,     // cuánto se acerca el disparo al objetivo
+  spreadMult: 0.3,   // multiplicador de dispersión cuando se engancha
+  maxRange: 90,      // distancia máxima de asistencia para armas de fuego
+};
+
+const BOT_NAMES = [
+  'Cristal', 'Nova', 'Eco', 'Vector', 'Fase', 'Prisma', 'Quark', 'Zenit',
+  'Orion', 'Fulgor', 'Troya', 'Delta', 'Runa', 'Vega', 'Lynx', 'Cometa',
+  'Nexo', 'Pulso', 'Kappa', 'Iris',
+];
+
+const BOT_COLORS = [
+  '#e53935', '#fb8c00', '#fdd835', '#43a047',
+  '#00acc1', '#1e88e5', '#8e24aa', '#f06292',
+];
+
+function shortestAngle(from, to) {
+  let d = (to - from) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+function turnToward(current, desired, step) {
+  const d = shortestAngle(current, desired);
+  if (Math.abs(d) <= step) return desired;
+  return current + Math.sign(d) * step;
+}
 
 // ------------------------------------------------------------------ raycasts
 
@@ -88,17 +133,47 @@ function rayArena(o, d) {
 // ------------------------------------------------------------------- lógica
 
 export class Game {
-  constructor(io, models) {
+  constructor(io, models, rawConfig = {}, id = null) {
     this.io = io;
     this.models = models;
+    this.id = id;
+    this.config = sanitizeRoomConfig(rawConfig);
     this.players = new Map();     // socketId -> estado de jugador
-    this.state = 'waiting';       // waiting | countdown | round | intermission
-    this.roundNumber = 0;         // 1..3
+    this.state = 'waiting';       // waiting | countdown | round | intermission | matchEnd
+    this.roundNumber = 0;         // 1..config.rounds
     this.matchWeapons = [];
     this.endsAt = 0;
     this.matchId = null;
     this.usedNicks = new Map();   // nick -> socketId (nicks únicos online)
+    this.botSeq = 0;
     this.timer = null;
+    this.createdAt = Date.now();
+  }
+
+  get roundsTotal() {
+    return this.config.rounds;
+  }
+
+  humanCount() {
+    let n = 0;
+    for (const p of this.players.values()) if (!p.bot) n++;
+    return n;
+  }
+
+  botCount() {
+    let n = 0;
+    for (const p of this.players.values()) if (p.bot) n++;
+    return n;
+  }
+
+  // configuración sin secretos (para game:init / listados)
+  publicConfig() {
+    const { password, ...rest } = this.config;
+    return { ...rest, hasPassword: !!password, id: this.id };
+  }
+
+  isEmpty() {
+    return this.humanCount() === 0;
   }
 
   start() {
@@ -118,6 +193,11 @@ export class Game {
   // ------------------------------------------------------------- conexión
 
   join(socket, { nick, color } = {}) {
+    if (this.players.has(socket.id)) return this.players.get(socket.id);
+    if (this.humanCount() >= this.config.maxPlayers) {
+      throw new Error('La sala está llena');
+    }
+
     const cleanNick = String(nick || 'Jugador').trim().slice(0, 18) || 'Jugador';
     const cleanColor = /^#[0-9a-fA-F]{6}$/.test(color || '') ? color : '#4fc3f7';
 
@@ -134,6 +214,7 @@ export class Game {
       id: socket.id,
       nick: finalNick,
       color: cleanColor,
+      bot: false,
       dbId: null,
       x: spawn.x, y: 0, z: spawn.z,
       yaw: 0, pitch: 0,
@@ -148,6 +229,7 @@ export class Game {
       respawnAt: 0,
       input: null,
       lastSeq: 0,
+      ready: false,
       joinedAt: Date.now(),
     };
     this.players.set(socket.id, player);
@@ -162,6 +244,9 @@ export class Game {
     // estado inicial para el nuevo jugador
     socket.emit('game:init', {
       selfId: socket.id,
+      roomId: this.id,
+      config: this.publicConfig(),
+      totalRounds: this.roundsTotal,
       map: MAP,
       players: this.serializePlayers(),
       round: this.roundNumber,
@@ -177,9 +262,10 @@ export class Game {
         jumpVelocity: JUMP_VELOCITY,
         gravity: GRAVITY,
         maxHealth: MAX_HEALTH,
-        respawnSeconds: RESPAWN_SECONDS,
-        roundSeconds: ROUND_SECONDS,
+        respawnSeconds: this.config.respawnSeconds,
+        roundSeconds: this.config.roundSeconds,
         arenaHalf: HALF,
+        tickRate: TICK_RATE,
         player: PLAYER,
       },
     });
@@ -190,9 +276,31 @@ export class Game {
 
     this.io.emit('chat:system', `${finalNick} entró a la partida`);
 
+    // completa la sala con bots hasta el aforo configurado
+    this.fillBots();
+
     // arranque automático: la primera conexión dispara la cuenta regresiva
-    if (this.state === 'waiting') this.startCountdown();
+    // (en salas con waitForReady, hasta que todos los humanos marquen listo)
+    if (this.state === 'waiting') this.maybeStartCountdown();
     return player;
+  }
+
+  // marca/listo de un jugador humano (solo afecta durante 'waiting')
+  setReady(socketId, ready) {
+    const p = this.players.get(socketId);
+    if (!p || p.bot) return;
+    p.ready = !!ready;
+    this.maybeStartCountdown();
+  }
+
+  // Arranca la cuenta regresiva si corresponde: por defecto en cuanto entra el
+  // primer jugador; con waitForReady, solo cuando todos los humanos están listos.
+  maybeStartCountdown() {
+    if (this.state !== 'waiting') return;
+    const humans = [...this.players.values()].filter((x) => !x.bot);
+    if (!humans.length) return;
+    if (this.config.waitForReady && !humans.every((x) => x.ready)) return;
+    this.startCountdown();
   }
 
   leave(socketId) {
@@ -203,14 +311,169 @@ export class Game {
     this.io.emit('player:left', { id: socketId, nick: p.nick });
     this.io.emit('chat:system', `${p.nick} salió de la partida`);
 
-    // sin nadie online: la partida se reinicia para el próximo jugador
-    if (this.players.size === 0 && this.state !== 'waiting') {
-      this.state = 'waiting';
-      this.roundNumber = 0;
-      this.matchWeapons = [];
-      this.endsAt = 0;
-      this.io.emit('game:state', { state: 'waiting', endsAt: 0 });
+    const humans = [...this.players.values()].filter((x) => !x.bot).length;
+    if (humans === 0) {
+      // sin humanos: se retiran los bots y la partida se reinicia
+      this.clearBots();
+      if (this.state !== 'waiting') {
+        this.state = 'waiting';
+        this.roundNumber = 0;
+        this.matchWeapons = [];
+        this.endsAt = 0;
+        this.io.emit('game:state', { state: 'waiting', endsAt: 0 });
+      }
+    } else {
+      this.fillBots();
+      // si queda gente en una sala que espera listos, reevaluar el arranque
+      this.maybeStartCountdown();
     }
+  }
+
+  // -------------------------------------------------------------- bots (IA)
+
+  fillBots() {
+    const humans = this.humanCount();
+    const cap = this.config.bots ? Math.min(this.config.maxPlayers, MAX_PLAYERS) : humans;
+    const target = Math.max(0, cap - humans);
+    const bots = [...this.players.values()].filter((p) => p.bot);
+
+    if (bots.length === target) return;
+    for (let i = target; i < bots.length; i++) this.removeBot(bots[i]);
+    for (let i = bots.length; i < target; i++) this.addBot();
+  }
+
+  clearBots() {
+    for (const p of [...this.players.values()]) {
+      if (p.bot) this.removeBot(p);
+    }
+  }
+
+  addBot() {
+    const id = `bot_${++this.botSeq}`;
+    const nick = this.pickBotNick();
+    const color = BOT_COLORS[Math.floor(Math.random() * BOT_COLORS.length)];
+    const spawn = this.pickSpawn();
+    const bot = {
+      id,
+      nick,
+      color,
+      bot: true,
+      dbId: null,
+      x: spawn.x, y: 0, z: spawn.z,
+      yaw: Math.random() * Math.PI * 2, pitch: 0,
+      vy: 0,
+      onGround: true,
+      crouch: false,
+      hp: MAX_HEALTH,
+      alive: true,
+      kills: 0, deaths: 0,
+      roundKills: 0, roundDeaths: 0,
+      mag: 0, reloadEndsAt: 0, lastShotAt: 0, prevShooting: false,
+      respawnAt: 0,
+      input: null,
+      lastSeq: 0,
+      joinedAt: Date.now(),
+      ai: {
+        yaw: Math.random() * Math.PI * 2,
+        wanderYaw: Math.random() * Math.PI * 2,
+        nextWanderAt: 0,
+        nextStrafeAt: 0,
+        nextShotAt: 0,
+        strafe: 0,
+      },
+    };
+    this.players.set(id, bot);
+    this.io.emit('player:joined', {
+      id, nick, color, bot: true, pos: { x: bot.x, y: bot.y, z: bot.z },
+    });
+    return bot;
+  }
+
+  removeBot(bot) {
+    if (!this.players.has(bot.id)) return;
+    this.players.delete(bot.id);
+    this.io.emit('player:left', { id: bot.id, nick: bot.nick });
+  }
+
+  pickBotNick() {
+    const used = new Set([...this.players.values()].map((p) => p.nick));
+    for (let i = 0; i < 50; i++) {
+      const base = BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)];
+      if (!used.has(base)) return base;
+      const withNum = `${base}-${Math.floor(Math.random() * 90 + 10)}`;
+      if (!used.has(withNum)) return withNum;
+    }
+    return `Bot-${++this.botSeq}`;
+  }
+
+  findBotTarget(bot) {
+    let best = null;
+    let bestDist = Infinity;
+    for (const p of this.players.values()) {
+      if (p.id === bot.id || !p.alive) continue;
+      const d = Math.hypot(p.x - bot.x, p.z - bot.z);
+      if (d < bestDist && d <= BOT_VIEW_RANGE) { bestDist = d; best = p; }
+    }
+    return best;
+  }
+
+  updateBotAI(bot, weaponId, now) {
+    const ai = bot.ai;
+    const target = this.findBotTarget(bot);
+    const input = {
+      fwd: 0, strafe: 0, jump: false, crouch: false, sprint: false,
+      yaw: ai.yaw, pitch: 0, shooting: false, reload: false, zoom: false,
+    };
+
+    if (target) {
+      const dx = target.x - bot.x;
+      const dz = target.z - bot.z;
+      const dist = Math.hypot(dx, dz) || 0.001;
+      const desiredYaw = Math.atan2(-dx, -dz);
+      ai.yaw = turnToward(ai.yaw, desiredYaw, BOT_TURN_RATE);
+
+      const eyeY = bot.y + PLAYER.eyeHeight;
+      const tEyeY = target.y + PLAYER.eyeHeight;
+      input.pitch = Math.atan2(tEyeY - eyeY, dist) + (Math.random() - 0.5) * BOT_AIM_JITTER * 0.5;
+
+      const pref = BOT_PREFERRED_RANGE[weaponId] ?? 8;
+      if (dist > pref * 1.15) input.fwd = 1;
+      else if (dist < pref * 0.7) input.fwd = -1;
+
+      if (now >= ai.nextStrafeAt) {
+        ai.strafe = [-1, 0, 1][Math.floor(Math.random() * 3)];
+        ai.nextStrafeAt = now + 800 + Math.random() * 1200;
+      }
+      input.strafe = ai.strafe;
+
+      const wpn = WEAPONS[weaponId];
+      if (wpn) {
+        const cp = Math.cos(input.pitch);
+        const dir = {
+          x: -Math.sin(ai.yaw) * cp,
+          y: Math.sin(input.pitch),
+          z: -Math.cos(ai.yaw) * cp,
+        };
+        const origin = { x: bot.x, y: eyeY, z: bot.z };
+        const wallT = this.mapHitDistance(origin, dir, wpn.range);
+        const los = wallT >= dist - 0.6;
+        const aligned = Math.abs(shortestAngle(ai.yaw, desiredYaw)) < BOT_ALIGN_THRESHOLD;
+        if (los && aligned && dist <= wpn.range && now >= ai.nextShotAt) {
+          input.shooting = true;
+          ai.nextShotAt = now + BOT_REACTION_MS + Math.random() * 350;
+        }
+      }
+    } else {
+      if (now >= ai.nextWanderAt) {
+        ai.wanderYaw = Math.random() * Math.PI * 2;
+        ai.nextWanderAt = now + 2000 + Math.random() * 3000;
+      }
+      ai.yaw = turnToward(ai.yaw, ai.wanderYaw, 0.05);
+      input.fwd = 1;
+    }
+
+    input.yaw = ai.yaw;
+    bot.input = input;
   }
 
   onInput(socketId, input) {
@@ -240,13 +503,15 @@ export class Game {
 
   startCountdown() {
     this.state = 'countdown';
-    this.endsAt = Date.now() + COUNTDOWN_SECONDS * 1000;
-    this.io.emit('game:state', { state: this.state, endsAt: this.endsAt, countdown: COUNTDOWN_SECONDS });
+    const secs = this.config.countdownSeconds;
+    this.endsAt = Date.now() + secs * 1000;
+    this.io.emit('game:state', { state: this.state, endsAt: this.endsAt, countdown: secs });
+    if (secs <= 0) this.startMatchCycle();
   }
 
   startMatchCycle() {
-    // nueva partida: armas re-aleatorizadas, marcadores a cero
-    this.matchWeapons = shuffle(['sniper', 'smg', 'knife']);
+    // nueva partida: secuencia de armas (fija o aleatoria), marcadores a cero
+    this.matchWeapons = this.buildWeaponSequence();
     for (const p of this.players.values()) {
       p.kills = 0; p.deaths = 0; p.roundKills = 0; p.roundDeaths = 0;
     }
@@ -257,13 +522,26 @@ export class Game {
     this.startRound(1);
   }
 
+  // secuencia de armas de la partida (configurada o aleatoria)
+  buildWeaponSequence() {
+    const total = this.roundsTotal;
+    if (Array.isArray(this.config.roundWeapons) && this.config.roundWeapons.length) {
+      const seq = this.config.roundWeapons.slice(0, total);
+      while (seq.length < total) seq.push(WEAPON_IDS[seq.length % WEAPON_IDS.length]);
+      return seq;
+    }
+    const bag = [];
+    while (bag.length < total) bag.push(...shuffle(WEAPON_IDS));
+    return bag.slice(0, total);
+  }
+
   startRound(n) {
-    if (n > 3) { this.startMatchCycle(); return; }
+    if (n > this.roundsTotal) { this.startMatchCycle(); return; }
     this.roundNumber = n;
     this.state = 'round';
     const weapon = this.currentWeapon();
     const now = Date.now();
-    this.endsAt = now + ROUND_SECONDS * 1000;
+    this.endsAt = now + this.config.roundSeconds * 1000;
 
     for (const p of this.players.values()) {
       p.roundKills = 0; p.roundDeaths = 0;
@@ -283,7 +561,7 @@ export class Game {
 
     this.io.emit('round:start', {
       round: n,
-      totalRounds: 3,
+      totalRounds: this.roundsTotal,
       weapon,
       weaponName: WEAPONS[weapon].name,
       endsAt: this.endsAt,
@@ -300,7 +578,7 @@ export class Game {
     });
     this.saveRoundResults().catch((err) => console.warn('[db] saveRoundResults:', err.message));
 
-    if (this.roundNumber >= 3) {
+    if (this.roundNumber >= this.roundsTotal) {
       // fin de partido: el estado se cambia ya (sin ventana de intermedio)
       this.state = 'matchEnd';
       this.endsAt = Date.now() + 20 * 1000;
@@ -308,7 +586,7 @@ export class Game {
       this.endMatch();
     } else {
       this.state = 'intermission';
-      this.endsAt = Date.now() + INTERMISSION_SECONDS * 1000;
+      this.endsAt = Date.now() + this.config.intermissionSeconds * 1000;
       this.io.emit('game:state', { state: this.state, endsAt: this.endsAt });
     }
   }
@@ -327,7 +605,8 @@ export class Game {
 
   currentWeapon() {
     if (!this.matchWeapons.length) return null;
-    return this.matchWeapons[Math.min(this.roundNumber, 3) - 1] || null;
+    const i = Math.min(Math.max(this.roundNumber, 1), this.matchWeapons.length) - 1;
+    return this.matchWeapons[i] || null;
   }
 
   tick() {
@@ -348,6 +627,7 @@ export class Game {
         continue;
       }
       if (this.state === 'round') {
+        if (p.bot) this.updateBotAI(p, weapon, now);
         this.updateMovement(p, dt, weapon);
         this.updateWeaponTimers(p, weapon, now);
       }
@@ -370,7 +650,7 @@ export class Game {
     const wpn = WEAPONS[weaponId] || WEAPONS.smg;
     let speed = BASE_SPEED * wpn.speedMult;
     if (p.crouch) speed *= CROUCH_MULT;
-    else if (inp.sprint && inp.fwd > 0) speed *= SPRINT_MULT;
+    else if (inp.sprint && (inp.fwd !== 0 || inp.strafe !== 0)) speed *= SPRINT_MULT;
 
     // dirección relativa al yaw (convención Three.js: forward = -Z)
     const sin = Math.sin(p.yaw);
@@ -523,10 +803,29 @@ export class Game {
       y: Math.sin(p.pitch),
       z: -Math.cos(p.yaw) * cp,
     };
-    // dispersión
-    if (wpn.spread > 0) {
+    // aim assist (solo humanos): dobla el disparo hacia un enemigo cercano
+    let assisted = false;
+    if (AIM_ASSIST.enabled && !p.bot) {
+      const assist = this.findAimAssistTarget(p, origin, dir, wpn);
+      if (assist) {
+        const maxAngle = wpn.type === 'melee' ? AIM_ASSIST.meleeAngle : AIM_ASSIST.angle;
+        const k = 1 - assist.angle / maxAngle; // 0..1 (más alineado = más fuerte)
+        const s = AIM_ASSIST.strength * (0.5 + 0.5 * k);
+        const bx = dir.x + (assist.x - dir.x) * s;
+        const by = dir.y + (assist.y - dir.y) * s;
+        const bz = dir.z + (assist.z - dir.z) * s;
+        const bl = Math.hypot(bx, by, bz) || 1;
+        dir = { x: bx / bl, y: by / bl, z: bz / bl };
+        assisted = true;
+      }
+    }
+
+    // dispersión (los bots además disparan con imprecisión propia)
+    let spread = wpn.spread + (p.bot && wpn.type !== 'melee' ? BOT_AIM_JITTER : 0);
+    if (assisted) spread *= AIM_ASSIST.spreadMult;
+    if (spread > 0) {
       const a = Math.random() * Math.PI * 2;
-      const r = Math.random() * wpn.spread;
+      const r = Math.random() * spread;
       dir = {
         x: dir.x + Math.cos(a) * r,
         y: dir.y + Math.sin(a) * r,
@@ -595,6 +894,35 @@ export class Game {
     return best ? { player: best, t: bestT } : null;
   }
 
+  // Enemigo más alineado con la mira dentro del cono de asistencia.
+  findAimAssistTarget(shooter, origin, dir, wpn) {
+    const isMelee = wpn.type === 'melee';
+    const maxAngle = isMelee ? AIM_ASSIST.meleeAngle : AIM_ASSIST.angle;
+    const maxRange = Math.min(wpn.range, isMelee ? 3.0 : AIM_ASSIST.maxRange);
+    let best = null;
+    let bestAngle = maxAngle;
+    for (const p of this.players.values()) {
+      if (p.id === shooter.id || !p.alive) continue;
+      const h = p.crouch ? PLAYER.crouchHeight : PLAYER.height;
+      const ax = p.x - origin.x;
+      const ay = (p.y + h * 0.62) - origin.y;
+      const az = p.z - origin.z;
+      const dist = Math.hypot(ax, ay, az);
+      if (dist < 0.05 || dist > maxRange) continue;
+      const tx = ax / dist;
+      const ty = ay / dist;
+      const tz = az / dist;
+      const dot = Math.max(-1, Math.min(1, dir.x * tx + dir.y * ty + dir.z * tz));
+      const angle = Math.acos(dot);
+      if (angle >= bestAngle) continue;
+      // no asistir a través de cobertura
+      if (this.mapHitDistance(origin, { x: tx, y: ty, z: tz }, dist) < dist - 0.5) continue;
+      best = { x: tx, y: ty, z: tz, angle };
+      bestAngle = angle;
+    }
+    return best;
+  }
+
   applyDamage(target, dmg, killer, weaponId) {
     if (!target.alive) return;
     target.hp -= dmg;
@@ -612,7 +940,7 @@ export class Game {
     target.roundDeaths += 1;
     killer.kills += 1;
     killer.roundKills += 1;
-    target.respawnAt = Date.now() + RESPAWN_SECONDS * 1000;
+    target.respawnAt = Date.now() + this.config.respawnSeconds * 1000;
 
     this.io.emit('game:kill', {
       killerId: killer.id,
@@ -639,13 +967,30 @@ export class Game {
   }
 
   pickSpawn() {
-    // solo spawns que no caen dentro de la geometría (evita jugadores atrapados)
     const height = PLAYER.height;
-    const spawns = MAP.spawns.filter((s) => !this.collides(s.x, s.z, 0, height));
-    if (!spawns.length) return { x: 0, z: 0 };
-    let best = spawns[0];
+
+    const valid = (s) => !this.collides(s.x, s.z, 0, height) && !this.occupied(s.x, s.z);
+
+    let candidates = MAP.spawns.filter(valid);
+
+    // si todos los spawns configurados están bloqueados, barre una malla
+    // para garantizar una posición libre (nunca se devuelve un punto 0,0
+    // que pueda caer dentro del cubo central).
+    if (!candidates.length) {
+      const step = 2;
+      for (let x = -HALF + 2; x <= HALF - 2; x += step) {
+        for (let z = -HALF + 2; z <= HALF - 2; z += step) {
+          const s = { x, z };
+          if (valid(s)) candidates.push(s);
+        }
+      }
+    }
+    if (!candidates.length) return { x: 0, z: 0 };
+
+    // mejor spawn = el más lejano a otros jugadores/bots vivos
+    let best = candidates[0];
     let bestScore = -1;
-    for (const s of spawns) {
+    for (const s of candidates) {
       let minDist = Infinity;
       for (const p of this.players.values()) {
         if (!p.alive) continue;
@@ -655,13 +1000,23 @@ export class Game {
       const score = minDist === Infinity ? 1000 : minDist;
       if (score > bestScore) { bestScore = score; best = s; }
     }
+
     // variación ligera para evitar apilarse (verificada contra colisiones)
     for (let i = 0; i < 8; i++) {
       const x = best.x + (Math.random() - 0.5);
       const z = best.z + (Math.random() - 0.5);
-      if (!this.collides(x, z, 0, height)) return { x, z };
+      if (valid({ x, z })) return { x, z };
     }
     return { x: best.x, z: best.z };
+  }
+
+  // true si hay un jugador/bot vivo demasiado cerca (evita spawns encima)
+  occupied(x, z, minDist = 1.2) {
+    for (const p of this.players.values()) {
+      if (!p.alive) continue;
+      if (Math.hypot(p.x - x, p.z - z) < minDist) return true;
+    }
+    return false;
   }
 
   // ------------------------------------------------------------- clasificación
@@ -728,6 +1083,7 @@ export class Game {
       id: p.id,
       nick: p.nick,
       color: p.color,
+      bot: p.bot,
       x: +p.x.toFixed(3),
       y: +p.y.toFixed(3),
       z: +p.z.toFixed(3),
@@ -744,6 +1100,7 @@ export class Game {
       reloading: !!p.reloadEndsAt,
       respawnIn: p.respawnAt ? Math.max(0, p.respawnAt - Date.now()) : 0,
       seq: p.lastSeq,
+      ready: !!p.ready,
     };
   }
 
@@ -755,6 +1112,7 @@ export class Game {
       round: this.roundNumber,
       weapon: this.currentWeapon(),
       timeLeft,
+      waitForReady: this.config.waitForReady,
       players: this.serializePlayers(),
     });
   }
