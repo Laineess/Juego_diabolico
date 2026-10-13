@@ -1,7 +1,7 @@
 // Controles locales solo PC: pointer lock, ratón, teclado y cámara.
 
 const STEP_HEIGHT = 0.35;
-const RENDER_SMOOTH = 120; // mayor = cámara más pegada a la predicción (menos arrastre)
+const RENDER_SMOOTH = 160; // mayor = cámara más pegada a la predicción (sin arrastre)
 
 export class LocalPlayer {
   constructor(camera, canvas) {
@@ -18,11 +18,13 @@ export class LocalPlayer {
     this.keys = new Set();
     this.shooting = false;
     this.shootQueued = false;
+    this.jumpQueued = false;
     this.zooming = false;
     this.reloadQueued = false;
     this.seq = 0;
 
     this.renderPos = null;
+    this.prevPos = { x: 0, y: 0, z: 0 };
     this.pos = { x: 0, y: 0, z: 0 };
     this.vy = 0;
     this.onGround = true;
@@ -106,7 +108,12 @@ export class LocalPlayer {
         break;
       case 'Space':
         e.preventDefault();
-        if (down) this.keys.add('jump'); else this.keys.delete('jump');
+        if (down) {
+          this.keys.add('jump');
+          this.jumpQueued = true;
+        } else {
+          this.keys.delete('jump');
+        }
         break;
       case 'KeyR':
         if (down) this.reloadQueued = true;
@@ -142,9 +149,11 @@ export class LocalPlayer {
     this.pitch = 0;
     this.shooting = false;
     this.shootQueued = false;
+    this.jumpQueued = false;
     this.zooming = false;
     this.keys.clear();
     this.renderPos = null;
+    this.prevPos = { x: 0, y: 0, z: 0 };
     this.pos = { x: 0, y: 0, z: 0 };
     this.vy = 0;
     this.onGround = true;
@@ -156,10 +165,11 @@ export class LocalPlayer {
   buildInput() {
     const fwd = (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0);
     const strafe = (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0);
+    const isJump = this.keys.has('jump') || this.jumpQueued;
     const input = {
       seq: ++this.seq,
       move: { fwd, strafe },
-      jump: this.keys.has('jump'),
+      jump: isJump,
       crouch: this.keys.has('ControlLeft') || this.keys.has('ControlRight'),
       sprint: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'),
       yaw: this.yaw,
@@ -170,8 +180,17 @@ export class LocalPlayer {
     };
     this.shootQueued = false;
     this.reloadQueued = false;
+    this.jumpQueued = false;
     this.pendingInputs.push(input);
     return input;
+  }
+
+  predictInput(inp) {
+    if (this.movementAllowed === false) return;
+    this.prevPos.x = this.pos.x;
+    this.prevPos.y = this.pos.y;
+    this.prevPos.z = this.pos.z;
+    this.simulateMovement(inp, 1 / (this.constants?.tickRate || 30));
   }
 
   selfFromSnapshot() {
@@ -192,68 +211,92 @@ export class LocalPlayer {
       ? this.constants.player.crouchEyeHeight
       : this.constants.player.eyeHeight;
 
-    // --- Client-Side Prediction ---
+    // --- Server Reconciliation ---
     if (self.seq > this.lastServerSeq) {
-      const prev = { x: this.pos.x, y: this.pos.y, z: this.pos.z };
       this.lastServerSeq = self.seq;
+
+      // Estado predicho antes de conciliar
+      const predX = this.pos.x;
+      const predY = this.pos.y;
+      const predZ = this.pos.z;
+
+      // Reset al estado autoritativo del servidor en self.seq
       this.pos.x = self.x;
       this.pos.y = self.y;
       this.pos.z = self.z;
-      // descartar inputs ya reconocidos por el servidor
+      if (typeof self.vy === 'number') this.vy = self.vy;
+      if (typeof self.onGround === 'boolean') this.onGround = self.onGround;
+
+      // Descartar inputs ya procesados por el servidor
       this.pendingInputs = this.pendingInputs.filter((i) => i.seq > self.seq);
 
       if (active) {
-        // re-aplicar inputs pendientes
+        // Re-simular solo los inputs pendientes (aún no reconocidos)
+        const tickDt = 1 / (this.constants?.tickRate || 30);
         for (const inp of this.pendingInputs) {
-          this.simulateMovement(inp, 1 / this.constants.tickRate);
+          this.simulateMovement(inp, tickDt);
         }
       } else {
         this.pendingInputs = [];
       }
 
-      // Diferencia entre lo que habíamos predicho y la posición del servidor:
-      // se acumula y se absorbe en los siguientes frames en vez de aplicar un
-      // salto seco (el causante de los tirones al moverse).
-      this.netErr.x += prev.x - this.pos.x;
-      this.netErr.y += prev.y - this.pos.y;
-      this.netErr.z += prev.z - this.pos.z;
+      // Discrepancia real entre lo predicho localmente y lo reconciliado
+      const errX = predX - this.pos.x;
+      const errY = predY - this.pos.y;
+      const errZ = predZ - this.pos.z;
+      const errDist = Math.hypot(errX, errY, errZ);
+
+      // Si la diferencia es insignificante (< 2.5 cm), ignorar para estabilidad total
+      if (errDist < 0.025) {
+        // Coincidencia exacta, nada que amortiguar
+      } else if (errDist > 2.0) {
+        // Desincronización grande (e.g. reaparición o teletransporte): corte directo
+        this.netErr.x = 0;
+        this.netErr.y = 0;
+        this.netErr.z = 0;
+        this.prevPos.x = this.pos.x;
+        this.prevPos.y = this.pos.y;
+        this.prevPos.z = this.pos.z;
+        this.renderPos = null;
+      } else {
+        // Absorber la discrepancia suavemente
+        this.netErr.x = errX;
+        this.netErr.y = errY;
+        this.netErr.z = errZ;
+        this.prevPos.x = this.pos.x;
+        this.prevPos.y = this.pos.y;
+        this.prevPos.z = this.pos.z;
+      }
     }
 
-    const absorb = Math.min(1, dt * 30);
-    this.pos.x += this.netErr.x * absorb;
-    this.pos.y += this.netErr.y * absorb;
-    this.pos.z += this.netErr.z * absorb;
-    this.netErr.x *= 1 - absorb;
-    this.netErr.y *= 1 - absorb;
-    this.netErr.z *= 1 - absorb;
+    // El error visual se disipa suavemente hacia 0 sin alterar la posición física
+    const decay = Math.exp(-28 * dt);
+    this.netErr.x *= decay;
+    this.netErr.y *= decay;
+    this.netErr.z *= decay;
+    if (Math.abs(this.netErr.x) < 0.0005) this.netErr.x = 0;
+    if (Math.abs(this.netErr.y) < 0.0005) this.netErr.y = 0;
+    if (Math.abs(this.netErr.z) < 0.0005) this.netErr.z = 0;
 
-    if (active) {
-      // predecir el frame actual con los inputs que estamos presionando
-      // pero que aún no se envían en el próximo buildInput()
-      const currentInput = {
-        fwd: (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0),
-        strafe: (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0),
-        jump: this.keys.has('jump'),
-        crouch: this.keys.has('ControlLeft') || this.keys.has('ControlRight'),
-        sprint: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'),
-        yaw: this.yaw,
-      };
-      this.simulateMovement(currentInput, dt);
-    }
+    // Interpolación sub-tick continua entre tick anterior y tick predicho actual
+    const tAlpha = Math.min(1, Math.max(0, typeof alpha === 'number' ? alpha : 1));
+    const smoothX = this.prevPos.x + (this.pos.x - this.prevPos.x) * tAlpha;
+    const smoothY = this.prevPos.y + (this.pos.y - this.prevPos.y) * tAlpha;
+    const smoothZ = this.prevPos.z + (this.pos.z - this.prevPos.z) * tAlpha;
 
+    // La posición visual objetivo incluye la corrección visual amortiguada
     const target = {
-      x: this.pos.x,
-      y: this.pos.y + eye,
-      z: this.pos.z,
+      x: smoothX + this.netErr.x,
+      y: smoothY + eye + this.netErr.y,
+      z: smoothZ + this.netErr.z,
     };
 
     if (!this.renderPos) {
       this.renderPos = { x: target.x, y: target.y, z: target.z };
     } else {
-      const k = 1 - Math.exp(-RENDER_SMOOTH * dt);
-      this.renderPos.x += (target.x - this.renderPos.x) * k;
-      this.renderPos.y += (target.y - this.renderPos.y) * k;
-      this.renderPos.z += (target.z - this.renderPos.z) * k;
+      this.renderPos.x = target.x;
+      this.renderPos.y = target.y;
+      this.renderPos.z = target.z;
     }
 
     this.camera.position.set(this.renderPos.x, this.renderPos.y, this.renderPos.z);

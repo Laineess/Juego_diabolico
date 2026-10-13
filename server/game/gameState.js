@@ -21,13 +21,13 @@ const HALF = ARENA.size / 2;
 
 // ---------------------------------------------------------------------- bots
 const MAX_PLAYERS = 15;          // aforo absoluto de cualquier sala
-const BOT_VIEW_RANGE = 70;       // distancia máxima a la que un bot detecta
-const BOT_REACTION_MS = 620;     // tiempo mínimo entre disparos de un bot
+const BOT_VIEW_RANGE = 38;       // distancia máxima a la que un bot detecta (evita ver a través de todo el mapa)
+const BOT_REACTION_MS = 1100;    // tiempo mínimo entre disparos de un bot (reacción humana)
 const BOT_PREFERRED_RANGE = { sniper: 22, smg: 10, knife: 1.6 };
 const BOT_SPEED_MULT = 0.82;     // los bots se mueven más lento que un humano
 const BOT_TURN_RATE = 0.075;     // radianes por tick al girar hacia el objetivo
-const BOT_AIM_JITTER = 0.05;     // error angular al disparar (radianes)
-const BOT_ALIGN_THRESHOLD = 0.14;// tolerancia de apuntado para disparar
+const BOT_AIM_JITTER = 0.12;     // dispersión angular de disparo de los bots
+const BOT_ALIGN_THRESHOLD = 0.18;// tolerancia de apuntado para disparar
 
 // ---------------------------------------------------------------- aim assist
 // Ayuda de puntería SOLO para jugadores humanos (los bots ya apuntan solos).
@@ -192,7 +192,7 @@ export class Game {
 
   // ------------------------------------------------------------- conexión
 
-  join(socket, { nick, color } = {}) {
+  join(socket, { nick, color, skin } = {}) {
     if (this.players.has(socket.id)) return this.players.get(socket.id);
     if (this.humanCount() >= this.config.maxPlayers) {
       throw new Error('La sala está llena');
@@ -200,6 +200,7 @@ export class Game {
 
     const cleanNick = String(nick || 'Jugador').trim().slice(0, 18) || 'Jugador';
     const cleanColor = /^#[0-9a-fA-F]{6}$/.test(color || '') ? color : '#4fc3f7';
+    const cleanSkin = ((typeof skin === 'string' && skin.toLowerCase() === 'cuaco') || cleanColor.toLowerCase() === '#232f3e') ? 'cuaco' : 'default';
 
     // nicks únicos entre jugadores conectados
     let finalNick = cleanNick;
@@ -214,6 +215,7 @@ export class Game {
       id: socket.id,
       nick: finalNick,
       color: cleanColor,
+      skin: cleanSkin,
       bot: false,
       dbId: null,
       x: spawn.x, y: 0, z: spawn.z,
@@ -271,7 +273,7 @@ export class Game {
     });
 
     socket.broadcast.emit('player:joined', {
-      id: socket.id, nick: finalNick, color: cleanColor, pos: { x: player.x, y: player.y, z: player.z },
+      id: socket.id, nick: finalNick, color: cleanColor, skin: cleanSkin, pos: { x: player.x, y: player.y, z: player.z },
     });
 
     this.io.emit('chat:system', `${finalNick} entró a la partida`);
@@ -835,14 +837,16 @@ export class Game {
     const dl = Math.hypot(dir.x, dir.y, dir.z);
     dir = { x: dir.x / dl, y: dir.y / dl, z: dir.z / dl };
 
+    const wallT = this.mapHitDistance(origin, dir, wpn.range);
+    const hit = this.firstPlayerHit(p, origin, dir, Math.min(wallT, wpn.range));
+    const dist = +(hit ? hit.t : wallT).toFixed(2);
+
     this.io.emit('game:shot', {
       id: p.id, weapon: weaponId,
       origin, dir,
+      dist,
       melee: wpn.type === 'melee',
     });
-
-    const wallT = this.mapHitDistance(origin, dir, wpn.range);
-    const hit = this.firstPlayerHit(p, origin, dir, Math.min(wallT, wpn.range));
 
     if (hit) {
       let dmg = wpn.damage;
@@ -949,7 +953,6 @@ export class Game {
       victimNick: target.nick,
       weapon: weaponId,
     });
-    this.io.emit('chat:system', `${killer.nick} ▸ ${target.nick} [${WEAPONS[weaponId]?.name || weaponId}]`);
   }
 
   respawn(p) {
@@ -1083,10 +1086,13 @@ export class Game {
       id: p.id,
       nick: p.nick,
       color: p.color,
+      skin: p.skin || (p.color && p.color.toLowerCase() === '#232f3e' ? 'cuaco' : 'default'),
       bot: p.bot,
       x: +p.x.toFixed(3),
       y: +p.y.toFixed(3),
       z: +p.z.toFixed(3),
+      vy: +(p.vy || 0).toFixed(3),
+      onGround: !!p.onGround,
       yaw: +p.yaw.toFixed(3),
       pitch: +p.pitch.toFixed(3),
       crouch: p.crouch,

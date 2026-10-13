@@ -40,8 +40,8 @@ const rooms = new RoomManager(io, models);
 rooms.createRoom({ name: 'Sala pública' }, { isDefault: true });
 
 function clientPayload(socket, payload) {
-  const { nick, color, password } = payload || {};
-  return { nick, color, password, socketId: socket.id };
+  const { nick, color, password, skin } = payload || {};
+  return { nick, color, password, skin, socketId: socket.id };
 }
 
 io.on('connection', (socket) => {

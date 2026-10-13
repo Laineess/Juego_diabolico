@@ -4,6 +4,7 @@
 const PRESET_COLORS = [
   '#e53935', '#fb8c00', '#fdd835', '#43a047',
   '#00acc1', '#1e88e5', '#8e24aa', '#f06292',
+  '#232f3e', // Cuaco (AWS Charcoal)
 ];
 
 const WEAPON_OPTIONS = [
@@ -28,6 +29,7 @@ export class Lobby {
     this.status = document.getElementById('lobby-status');
 
     this.color = '#4fc3f7';
+    this.skin = 'default';
     this.weaponRows = [];
 
     this.buildSwatches();
@@ -54,7 +56,13 @@ export class Lobby {
       b.type = 'button';
       b.className = 'swatch';
       b.style.background = color;
-      b.title = color;
+      if (color.toLowerCase() === '#232f3e') {
+        b.classList.add('swatch-cuaco');
+        b.title = 'Cuaco (Skin Especial AWS)';
+        b.innerHTML = '<span class="cuaco-mini-logo">AWS</span>';
+      } else {
+        b.title = color;
+      }
       b.addEventListener('click', () => {
         this.setColor(color);
         this.markSelected(b);
@@ -72,7 +80,22 @@ export class Lobby {
   setColor(color) {
     this.color = color;
     this.colorInput.value = color;
-    this.onColorChange?.(color);
+    const isCuaco = typeof color === 'string' && color.toLowerCase() === '#232f3e';
+    this.skin = isCuaco ? 'cuaco' : 'default';
+    this.updateSkinBadge(isCuaco);
+    this.onColorChange?.(color, this.skin);
+  }
+
+  updateSkinBadge(isCuaco) {
+    const badge = document.getElementById('skin-name-badge');
+    if (!badge) return;
+    if (isCuaco) {
+      badge.textContent = '🐴 Skin: Cuaco';
+      badge.classList.add('badge-cuaco');
+    } else {
+      badge.textContent = '💎 Skin: Clásica';
+      badge.classList.remove('badge-cuaco');
+    }
   }
 
   // --------------------------------------------------------------- tabs
@@ -245,7 +268,7 @@ export class Lobby {
     if (!nick) return;
     this.setStatus('');
     this.setBusy(true);
-    this.onPlay?.(nick, this.color);
+    this.onPlay?.(nick, this.color, this.skin);
   }
 
   setStatus(msg) {

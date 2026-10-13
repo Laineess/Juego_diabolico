@@ -51,12 +51,12 @@ export class Network {
     this.socket?.emit('room:create', payload);
   }
 
-  joinRoom(roomId, nick, color, password) {
-    this.socket?.emit('room:join', { roomId, nick, color, password });
+  joinRoom(roomId, nick, color, password, skin) {
+    this.socket?.emit('room:join', { roomId, nick, color, password, skin });
   }
 
-  join(nick, color) {
-    this.socket?.emit('player:join', { nick, color });
+  join(nick, color, skin) {
+    this.socket?.emit('player:join', { nick, color, skin });
   }
 
   leaveRoom() {
@@ -75,23 +75,43 @@ export class Network {
     return this.snapshots.length ? this.snapshots[this.snapshots.length - 1] : null;
   }
 
-  // interpolación con 100 ms de retraso para jugadores remotos
-  snapshotsAt(delayMs = 100) {
+  // interpolación continua con retraso para jugadores remotos (suave a cualquier tasa de Hz)
+  snapshotsAt(delayMs = 100, dt = 0) {
     const snaps = this.snapshots;
     if (snaps.length < 2) return null;
-    const target = snaps[snaps.length - 1].t - delayMs;
+
+    const latestT = snaps[snaps.length - 1].t;
+    const oldestT = snaps[0].t;
+    const targetIdeal = latestT - delayMs;
+
+    if (this.interpTime === undefined || Math.abs(this.interpTime - targetIdeal) > 350) {
+      this.interpTime = targetIdeal;
+    } else {
+      // Avanza suavemente en cada fotograma renderizado
+      this.interpTime += dt * 1000;
+      // Amortigua cualquier desviación respecto al flujo de paquetes
+      this.interpTime += (targetIdeal - this.interpTime) * Math.min(1, dt * 6);
+    }
+
+    const target = Math.max(oldestT, Math.min(latestT, this.interpTime));
+
     for (let i = snaps.length - 1; i > 0; i--) {
       if (snaps[i - 1].t <= target && snaps[i].t >= target) {
         const a = snaps[i - 1];
         const b = snaps[i];
-        const alpha = b.t === a.t ? 1 : (target - a.t) / (b.t - a.t);
+        const span = b.t - a.t;
+        const alpha = span <= 0 ? 1 : Math.max(0, Math.min(1, (target - a.t) / span));
         return { a, b, alpha };
       }
     }
-    return null;
+
+    const a = snaps[snaps.length - 2];
+    const b = snaps[snaps.length - 1];
+    return { a, b, alpha: 1 };
   }
 
   clear() {
     this.snapshots = [];
+    this.interpTime = undefined;
   }
 }

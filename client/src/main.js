@@ -1,6 +1,4 @@
-// Inicializador del cliente: conecta lobby, red, renderizado, controles y HUD.
-
-import { Renderer, createGlassCharacter, setCharacterLabel, setCharacterWeapon, updateCharacter } from './js/renderer.js';
+import { Renderer, createPlayerCharacter, setCharacterLabel, setCharacterWeapon, updateCharacter } from './js/renderer.js';
 import { buildMap } from './js/map.js';
 import { Network } from './js/network.js';
 import { LocalPlayer } from './js/player.js';
@@ -31,17 +29,45 @@ function boot() {
   weapons.characters = characters;
 
   // ------------------------------------------------------- escena de preview
-  const previewChar = createGlassCharacter('#4fc3f7');
+  let previewChar = createPlayerCharacter('#4fc3f7');
   previewChar.label.visible = false;
   previewChar.hpBar.visible = false;
   previewChar.hpBg.visible = false;
   previewChar.group.position.y = 0.18;
+  previewChar.group.rotation.y = Math.PI;
   renderer.previewScene.add(previewChar.group);
 
-  function applyPreviewColor(color) {
-    previewChar.material.color.set(color);
-    previewChar.material.emissive.set(color);
-    previewChar.material.attenuationColor.set(color);
+  function disposeCharacter(char) {
+    if (!char || !char.group) return;
+    char.group.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+        else o.material.dispose();
+      }
+    });
+  }
+
+  function applyPreviewColor(color, skin = null) {
+    const isCuaco = (skin === 'cuaco') || (typeof color === 'string' && color.toLowerCase() === '#232f3e');
+    const targetSkin = isCuaco ? 'cuaco' : 'glass';
+
+    if (previewChar.skin !== targetSkin) {
+      const currentRotY = previewChar.group.rotation.y;
+      renderer.previewScene.remove(previewChar.group);
+      disposeCharacter(previewChar);
+      previewChar = createPlayerCharacter(color, targetSkin);
+      previewChar.label.visible = false;
+      previewChar.hpBar.visible = false;
+      previewChar.hpBg.visible = false;
+      previewChar.group.position.y = 0.18;
+      previewChar.group.rotation.y = currentRotY;
+      renderer.previewScene.add(previewChar.group);
+    } else if (previewChar.material) {
+      previewChar.material.color.set(color);
+      previewChar.material.emissive.set(color);
+      previewChar.material.attenuationColor.set(color);
+    }
   }
 
   // -------------------------------------------------------------- variables
@@ -70,10 +96,10 @@ function boot() {
 
   // ------------------------------------------------------------------ lobby
   const lobby = new Lobby({
-    onPlay: (nick, color) => network.join(nick, color),
+    onPlay: (nick, color, skin) => network.join(nick, color, skin),
     onColorChange: applyPreviewColor,
-    onJoinRoom: (roomId, nick, color, password) => network.joinRoom(roomId, nick, color, password),
-    onCreateRoom: (config, nick, color) => network.createRoom({ config, nick, color }),
+    onJoinRoom: (roomId, nick, color, password, skin) => network.joinRoom(roomId, nick, color, password, skin),
+    onCreateRoom: (config, nick, color, skin) => network.createRoom({ config, nick, color, skin }),
   });
 
   lobby.onRefreshRooms = () => {
@@ -264,7 +290,7 @@ function boot() {
   // --------------------------------------------------------------- utilidades
   function createCharacter(p) {
     const pos = p.pos || p;               // player:joined envía { pos: {...} }
-    const char = createGlassCharacter(p.color);
+    const char = createPlayerCharacter(p.color, p.skin);
     setCharacterLabel(char, p.nick, '#ffffff');
     setCharacterWeapon(char, V.weapon);
     char.group.position.set(pos.x || 0, pos.y || 0, pos.z || 0);
@@ -277,10 +303,7 @@ function boot() {
     const char = characters.get(id);
     if (!char) return;
     renderer.gameScene.remove(char.group);
-    char.group.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
-      if (o.material) o.material.dispose();
-    });
+    disposeCharacter(char);
     characters.delete(id);
   }
 
@@ -436,18 +459,24 @@ function boot() {
     hud.setTime(V.timeLeft, V.state);
     hud.tickCountdowns(V.timeLeft);
 
-    // entradas al servidor a 30 Hz con acumulador: cadencia regular aunque la
-    // tasa de frames varíe (antes con setInterval el envío se desincronizaba
-    // y contribuía a los tirones de movimiento)
-    V.inputAcc += dt;
-    if (V.inputAcc >= 1 / 30) {
-      V.inputAcc -= 1 / 30;
-      if (player.playing) network.sendInput(player.buildInput());
-    }
-
     // el servidor solo procesa movimiento durante la ronda
     player.movementAllowed = V.state === 'round';
-    player.update(dt);
+
+    // entradas al servidor a 30 Hz con acumulador: cadencia regular con
+    // simulación y predicción inmediata del input en el cliente (0 ms retardo)
+    V.inputAcc += dt;
+    if (V.inputAcc > 0.15) V.inputAcc = 0.15;
+    while (V.inputAcc >= 1 / 30) {
+      V.inputAcc -= 1 / 30;
+      if (player.playing && player.movementAllowed) {
+        const inp = player.buildInput();
+        player.predictInput(inp);
+        network.sendInput(inp);
+      }
+    }
+
+    const inputAlpha = Math.min(1, Math.max(0, V.inputAcc / (1 / 30)));
+    player.update(dt, inputAlpha);
     weapons.update(dt, player);
     updateRemotes(dt);
   };
@@ -463,7 +492,7 @@ function boot() {
   });
 
   function updateRemotes(dt) {
-    const pair = network.snapshotsAt(100);
+    const pair = network.snapshotsAt(100, dt);
     const latest = network.latest();
     if (!latest) return;
 
