@@ -8,6 +8,10 @@ import { WEAPON_IDS, sanitizeRoomConfig } from './roomConfig.js';
 import { MAP, ARENA, PLAYER } from './mapData.js';
 
 const TICK_RATE = Number(process.env.TICK_RATE) || 30;
+// La simulación corre a TICK_RATE pero el estado se envía a NET_RATE (el
+// cliente interpola, así que menos paquetes = menos lag sin perder fluidez).
+const NET_RATE = Number(process.env.NET_RATE) || 20;
+const MAX_TICK_DT = 0.25;       // clamp para evitar "spirales de la muerte"
 
 const BASE_SPEED = 6.0;
 const SPRINT_MULT = 1.35;
@@ -21,6 +25,7 @@ const HALF = ARENA.size / 2;
 
 // ---------------------------------------------------------------------- bots
 const MAX_PLAYERS = 15;          // aforo absoluto de cualquier sala
+const MAX_BOTS = Number(process.env.MAX_BOTS) || 8; // tope de bots por sala
 const BOT_VIEW_RANGE = 38;       // distancia máxima a la que un bot detecta (evita ver a través de todo el mapa)
 const BOT_REACTION_MS = 1100;    // tiempo mínimo entre disparos de un bot (reacción humana)
 const BOT_PREFERRED_RANGE = { sniper: 22, smg: 10, knife: 1.6 };
@@ -148,6 +153,9 @@ export class Game {
     this.botSeq = 0;
     this.timer = null;
     this.createdAt = Date.now();
+    this.lastTickAt = 0;
+    this._lastNetAt = 0;
+    this.netInterval = 1000 / NET_RATE;
   }
 
   get roundsTotal() {
@@ -177,9 +185,15 @@ export class Game {
   }
 
   start() {
+    if (this.timer) return; // ya está corriendo
+    this.lastTickAt = Date.now();
     this.timer = setInterval(() => {
+      const now = Date.now();
+      let dt = (now - this.lastTickAt) / 1000;
+      this.lastTickAt = now;
+      if (dt > MAX_TICK_DT) dt = MAX_TICK_DT; // evita ráfagas tras un bloqueo
       try {
-        this.tick();
+        this.tick(dt);
       } catch (err) {
         console.error('[game] error en tick:', err);
       }
@@ -188,6 +202,7 @@ export class Game {
 
   stop() {
     if (this.timer) clearInterval(this.timer);
+    this.timer = null;
   }
 
   // ------------------------------------------------------------- conexión
@@ -235,6 +250,7 @@ export class Game {
       joinedAt: Date.now(),
     };
     this.players.set(socket.id, player);
+    this.start(); // reanuda la simulación (estaba pausada si la sala quedó vacía)
 
     this.models?.upsertPlayer(finalNick, cleanColor)
       .then((id) => {
@@ -272,11 +288,11 @@ export class Game {
       },
     });
 
-    socket.broadcast.emit('player:joined', {
+    socket.to(this.id).emit('player:joined', {
       id: socket.id, nick: finalNick, color: cleanColor, skin: cleanSkin, pos: { x: player.x, y: player.y, z: player.z },
     });
 
-    this.io.emit('chat:system', `${finalNick} entró a la partida`);
+    this.io.to(this.id).emit('chat:system', `${finalNick} entró a la partida`);
 
     // completa la sala con bots hasta el aforo configurado
     this.fillBots();
@@ -310,8 +326,8 @@ export class Game {
     if (!p) return;
     if (this.usedNicks.get(p.nick) === socketId) this.usedNicks.delete(p.nick);
     this.players.delete(socketId);
-    this.io.emit('player:left', { id: socketId, nick: p.nick });
-    this.io.emit('chat:system', `${p.nick} salió de la partida`);
+    this.io.to(this.id).emit('player:left', { id: socketId, nick: p.nick });
+    this.io.to(this.id).emit('chat:system', `${p.nick} salió de la partida`);
 
     const humans = [...this.players.values()].filter((x) => !x.bot).length;
     if (humans === 0) {
@@ -322,8 +338,9 @@ export class Game {
         this.roundNumber = 0;
         this.matchWeapons = [];
         this.endsAt = 0;
-        this.io.emit('game:state', { state: 'waiting', endsAt: 0 });
+        this.io.to(this.id).emit('game:state', { state: 'waiting', endsAt: 0 });
       }
+      this.stop(); // sin humanos no hay nada que simular ni emitir
     } else {
       this.fillBots();
       // si queda gente en una sala que espera listos, reevaluar el arranque
@@ -335,7 +352,9 @@ export class Game {
 
   fillBots() {
     const humans = this.humanCount();
-    const cap = this.config.bots ? Math.min(this.config.maxPlayers, MAX_PLAYERS) : humans;
+    const cap = this.config.bots
+      ? Math.min(this.config.maxPlayers, MAX_PLAYERS, humans + MAX_BOTS)
+      : humans;
     const target = Math.max(0, cap - humans);
     const bots = [...this.players.values()].filter((p) => p.bot);
 
@@ -385,7 +404,7 @@ export class Game {
       },
     };
     this.players.set(id, bot);
-    this.io.emit('player:joined', {
+    this.io.to(this.id).emit('player:joined', {
       id, nick, color, bot: true, pos: { x: bot.x, y: bot.y, z: bot.z },
     });
     return bot;
@@ -394,7 +413,7 @@ export class Game {
   removeBot(bot) {
     if (!this.players.has(bot.id)) return;
     this.players.delete(bot.id);
-    this.io.emit('player:left', { id: bot.id, nick: bot.nick });
+    this.io.to(this.id).emit('player:left', { id: bot.id, nick: bot.nick });
   }
 
   pickBotNick() {
@@ -507,7 +526,7 @@ export class Game {
     this.state = 'countdown';
     const secs = this.config.countdownSeconds;
     this.endsAt = Date.now() + secs * 1000;
-    this.io.emit('game:state', { state: this.state, endsAt: this.endsAt, countdown: secs });
+    this.io.to(this.id).emit('game:state', { state: this.state, endsAt: this.endsAt, countdown: secs });
     if (secs <= 0) this.startMatchCycle();
   }
 
@@ -558,10 +577,10 @@ export class Game {
       const spawn = this.pickSpawn();
       p.x = spawn.x; p.y = 0; p.z = spawn.z;
       p.vy = 0;
-      this.io.emit('player:respawn', { id: p.id, pos: { x: p.x, y: p.y, z: p.z }, hp: MAX_HEALTH });
+      this.io.to(this.id).emit('player:respawn', { id: p.id, pos: { x: p.x, y: p.y, z: p.z }, hp: MAX_HEALTH });
     }
 
-    this.io.emit('round:start', {
+    this.io.to(this.id).emit('round:start', {
       round: n,
       totalRounds: this.roundsTotal,
       weapon,
@@ -573,7 +592,7 @@ export class Game {
 
   endRound() {
     const standings = this.roundStandings();
-    this.io.emit('round:end', {
+    this.io.to(this.id).emit('round:end', {
       round: this.roundNumber,
       top3: standings.slice(0, 3),
       standings,
@@ -584,12 +603,12 @@ export class Game {
       // fin de partido: el estado se cambia ya (sin ventana de intermedio)
       this.state = 'matchEnd';
       this.endsAt = Date.now() + 20 * 1000;
-      this.io.emit('game:state', { state: this.state, endsAt: this.endsAt });
+      this.io.to(this.id).emit('game:state', { state: this.state, endsAt: this.endsAt });
       this.endMatch();
     } else {
       this.state = 'intermission';
       this.endsAt = Date.now() + this.config.intermissionSeconds * 1000;
-      this.io.emit('game:state', { state: this.state, endsAt: this.endsAt });
+      this.io.to(this.id).emit('game:state', { state: this.state, endsAt: this.endsAt });
     }
   }
 
@@ -598,10 +617,10 @@ export class Game {
     const podium = ranking.slice(0, 3).map((s, i) => ({ rank: i + 1, ...s }));
 
     this.saveMatchResults(ranking)
-      .then((saved) => this.io.emit('match:end', { podium, standings: ranking, saved: true }))
+      .then((saved) => this.io.to(this.id).emit('match:end', { podium, standings: ranking, saved: true }))
       .catch((err) => {
         console.warn('[db] saveMatchResults:', err.message);
-        this.io.emit('match:end', { podium, standings: ranking, saved: false });
+        this.io.to(this.id).emit('match:end', { podium, standings: ranking, saved: false });
       });
   }
 
@@ -611,8 +630,11 @@ export class Game {
     return this.matchWeapons[i] || null;
   }
 
-  tick() {
+  tick(dt = 1 / TICK_RATE) {
     const now = Date.now();
+
+    // sin jugadores no hay simulación ni estado que difundir
+    if (this.players.size === 0) return;
 
     // transiciones temporales
     if (this.state === 'countdown' && now >= this.endsAt) this.startMatchCycle();
@@ -620,7 +642,6 @@ export class Game {
     else if (this.state === 'intermission' && now >= this.endsAt) this.startRound(this.roundNumber + 1);
     else if (this.state === 'matchEnd' && now >= this.endsAt) this.startMatchCycle();
 
-    const dt = 1 / TICK_RATE;
     const weapon = this.currentWeapon();
 
     for (const p of this.players.values()) {
@@ -635,7 +656,11 @@ export class Game {
       }
     }
 
-    this.broadcastUpdate(now);
+    // difunde a NET_RATE, no en cada tick (el cliente interpola entre paquetes)
+    if (now - this._lastNetAt >= this.netInterval) {
+      this._lastNetAt = now;
+      this.broadcastUpdate(now);
+    }
   }
 
   // --------------------------------------------------------------- movimiento
@@ -841,7 +866,7 @@ export class Game {
     const hit = this.firstPlayerHit(p, origin, dir, Math.min(wallT, wpn.range));
     const dist = +(hit ? hit.t : wallT).toFixed(2);
 
-    this.io.emit('game:shot', {
+    this.io.to(this.id).emit('game:shot', {
       id: p.id, weapon: weaponId,
       origin, dir,
       dist,
@@ -931,7 +956,7 @@ export class Game {
     if (!target.alive) return;
     target.hp -= dmg;
     if (target.hp > 0) {
-      this.io.emit('game:hit', {
+      this.io.to(this.id).emit('game:hit', {
         targetId: target.id, byId: killer.id, dmg, hp: target.hp,
       });
       return;
@@ -946,7 +971,7 @@ export class Game {
     killer.roundKills += 1;
     target.respawnAt = Date.now() + this.config.respawnSeconds * 1000;
 
-    this.io.emit('game:kill', {
+    this.io.to(this.id).emit('game:kill', {
       killerId: killer.id,
       killerNick: killer.nick,
       victimId: target.id,
@@ -964,7 +989,7 @@ export class Game {
     p.respawnAt = 0;
     p.mag = WEAPONS[this.currentWeapon()]?.magSize ?? 0;
     p.reloadEndsAt = 0;
-    this.io.emit('player:respawn', {
+    this.io.to(this.id).emit('player:respawn', {
       id: p.id, pos: { x: p.x, y: p.y, z: p.z }, hp: MAX_HEALTH,
     });
   }
@@ -1112,7 +1137,7 @@ export class Game {
 
   broadcastUpdate(now) {
     const timeLeft = Math.max(0, this.endsAt - now);
-    this.io.emit('game:update', {
+    this.io.to(this.id).emit('game:update', {
       t: now,
       state: this.state,
       round: this.roundNumber,

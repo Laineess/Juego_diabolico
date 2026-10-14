@@ -22,8 +22,15 @@ export class RoomManager {
     return [...this.rooms.values()].map(publicRoomInfo);
   }
 
+  // Emite el listado una sola vez por turno del event loop (coalesce ráfagas
+  // de join/leave) para no bombardear a todos los clientes.
   broadcastList() {
-    this.io.emit('rooms:list', this.list());
+    if (this._listPending) return;
+    this._listPending = true;
+    setImmediate(() => {
+      this._listPending = false;
+      this.io.emit('rooms:list', this.list());
+    });
   }
 
   get(roomId) {
@@ -31,10 +38,15 @@ export class RoomManager {
   }
 
   createRoom(rawConfig = {}, { isDefault = false } = {}) {
+    // una sala privada sin contraseña no protege nada: no se permite crearla
+    if (rawConfig.isPrivate && !String(rawConfig.password || '').trim()) {
+      throw new Error('La sala privada necesita una contraseña');
+    }
     const id = isDefault ? 'public_1' : makeRoomId();
     const game = new Game(this.io, this.models, rawConfig, id);
     this.rooms.set(id, game);
-    game.start();
+    // El loop arranca con la primera conexión y se detiene al quedar vacía
+    // (ver Game.join / Game.leave), así no hay timers emitiendo en el vacío.
     if (isDefault) this.defaultRoomId = id;
     this.broadcastList();
     return game;
@@ -68,12 +80,24 @@ export class RoomManager {
   }
 
   attach(socket, room, payload) {
-    if (!room.players.has(socket.id) && room.humanCount() >= room.config.maxPlayers) {
-      throw new Error('La sala está llena');
+    const already = this.socketRoom.get(socket.id) === room.id;
+    if (!already) {
+      if (!room.players.has(socket.id) && room.humanCount() >= room.config.maxPlayers) {
+        throw new Error('La sala está llena');
+      }
+      // si ya estaba en otra sala, la abandona primero
+      this.detach(socket.id);
+      // une el socket a la sala de Socket.io ANTES de Game.join para que ya
+      // reciba los eventos de la sala (p. ej. los bots que rellenan el aforo)
+      socket.join(room.id);
     }
-    // si ya estaba en otra sala, la abandona primero
-    this.detach(socket.id);
-    const player = room.join(socket, payload);
+    let player;
+    try {
+      player = room.join(socket, payload);
+    } catch (err) {
+      if (!already) socket.leave(room.id);
+      throw err;
+    }
     this.socketRoom.set(socket.id, room.id);
     this.broadcastList();
     return { room, player };
@@ -83,6 +107,7 @@ export class RoomManager {
     const roomId = this.socketRoom.get(socketId);
     if (!roomId) return;
     this.socketRoom.delete(socketId);
+    this.io.sockets.sockets.get(socketId)?.leave(roomId);
     const room = this.rooms.get(roomId);
     if (!room) return;
     room.leave(socketId);

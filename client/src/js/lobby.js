@@ -128,6 +128,15 @@ export class Lobby {
 
   setRooms(list) {
     this.rooms = list || [];
+
+    // conserva lo que el usuario haya tecleado en los campos de contraseña
+    // (el listado se refresca al entrar/salir jugadores de cualquier sala)
+    const typed = new Map();
+    for (const el of this.roomList.querySelectorAll('.room-item[data-room-id]')) {
+      const pw = el.querySelector('.room-pw');
+      if (pw && pw.value) typed.set(el.dataset.roomId, pw.value);
+    }
+
     this.roomsCount.textContent = `${this.rooms.length} sala${this.rooms.length === 1 ? '' : 's'}`;
     if (!this.rooms.length) {
       this.roomList.innerHTML = '<div class="room-empty">No hay salas disponibles. ¡Crea una!</div>';
@@ -137,6 +146,7 @@ export class Lobby {
     for (const r of this.rooms) {
       const item = document.createElement('div');
       item.className = 'room-item';
+      item.dataset.roomId = r.id;
       const full = r.players >= r.maxPlayers;
       item.innerHTML = `
         <div class="info">
@@ -152,6 +162,7 @@ export class Lobby {
         pw.style.padding = '5px';
         pw.style.border = '1px solid #bbb';
         pw.style.borderRadius = '6px';
+        pw.value = typed.get(r.id) || '';
         item.appendChild(pw);
       }
       const btn = document.createElement('button');
@@ -192,7 +203,14 @@ export class Lobby {
 
     this.roundsInput.addEventListener('input', () => this.buildWeaponRows());
     this.privateInput.addEventListener('change', () => {
-      this.passwordInput.classList.toggle('hidden', !this.privateInput.checked);
+      const priv = this.privateInput.checked;
+      this.passwordInput.classList.toggle('hidden', !priv);
+      // en salas privadas es obligatorio esperar a que todos estén listos
+      this.waitReadyInput.checked = priv ? true : this.waitReadyInput.checked;
+      this.waitReadyInput.disabled = priv;
+      this.waitReadyInput.title = priv
+        ? 'Obligatorio en salas privadas: la partida no empieza hasta que todos pulsen F'
+        : '';
     });
     this.createBtn.addEventListener('click', () => this.createRoom());
   }
@@ -234,7 +252,7 @@ export class Lobby {
       roundSeconds: clamp(Number(this.roundSecondsInput.value) || 180, 30, 1800),
       intermissionSeconds: clamp(Number(this.intermissionInput.value) || 10, 3, 60),
       bots: this.botsInput.checked,
-      waitForReady: this.waitReadyInput.checked,
+      waitForReady: this.privateInput.checked ? true : this.waitReadyInput.checked,
       isPrivate: this.privateInput.checked,
       password: this.privateInput.checked ? this.passwordInput.value : '',
       roundWeapons: this.weaponRows.map((s) => s.value),

@@ -45,7 +45,11 @@ export function sanitizeRoomConfig(raw = {}) {
   cfg.isPrivate = !!raw.isPrivate;
   cfg.password = cfg.isPrivate ? cleanString(raw.password, 24) : '';
   cfg.bots = raw.bots === undefined ? ROOM_DEFAULTS.bots : !!raw.bots;
-  cfg.waitForReady = raw.waitForReady === undefined ? ROOM_DEFAULTS.waitForReady : !!raw.waitForReady;
+  // Las salas privadas SIEMPRE esperan a que todos los humanos pulsen listo (F):
+  // así se evita que la partida arranque antes de que entren los invitados.
+  cfg.waitForReady = cfg.isPrivate
+    ? true
+    : (raw.waitForReady === undefined ? ROOM_DEFAULTS.waitForReady : !!raw.waitForReady);
 
   for (const key of ['maxPlayers', 'rounds', 'roundSeconds', 'intermissionSeconds', 'countdownSeconds', 'respawnSeconds']) {
     cfg[key] = clampInt(raw[key], LIMITS[key], ROOM_DEFAULTS[key]);
